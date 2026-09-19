@@ -10,3 +10,6 @@ websockets>=12.0
 # Connectome / data helpers used at import time by some modules
 pandas>=2.1
 requests>=2.31
+# Needed at import time by flybrain.visualization.unified_dashboard
+# (server only reuses REGION_COLORS / REGION_LABEL constants from it)
+matplotlib>=3.7
