@@ -33,11 +33,14 @@ class Gesture(str, Enum):
     RIGHT = "right"
     ROTATE_CW = "rot_cw"
     ROTATE_CCW = "rot_ccw"
+    FORWARD = "forward"
+    BACKWARD = "backward"
     NONE = "none"
 
 
 ALL_GESTURES = [Gesture.UP, Gesture.DOWN, Gesture.LEFT, Gesture.RIGHT,
-                Gesture.ROTATE_CW, Gesture.ROTATE_CCW]
+                Gesture.ROTATE_CW, Gesture.ROTATE_CCW,
+                Gesture.FORWARD, Gesture.BACKWARD]
 
 
 @dataclass

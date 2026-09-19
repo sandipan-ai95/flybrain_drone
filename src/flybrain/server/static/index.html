@@ -50,6 +50,7 @@
     <div class="chip px-2.5 py-1">
       <span id="arm-badge" class="text-[10px] font-bold text-slate-400">○ DISARMED</span>
     </div>
+    <button id="btn-sonify" class="chip px-2.5 py-1 text-[10px] font-bold text-slate-300 hover:text-white">🔊 Sonify: OFF</button>
     <div id="badge-time" class="chip px-2.5 py-1 text-[11px] text-slate-300 font-mono">
       Time: <span id="txt-time">0.0</span>s &nbsp;|&nbsp; FPS: <span id="txt-fps">--</span>
     </div>
@@ -161,6 +162,18 @@
       <div class="relative flex-1 min-h-0 rounded-md overflow-hidden bg-gradient-to-b from-[#141b30] to-[#080b16]">
         <canvas id="drone3d" class="brain absolute inset-0"></canvas>
         <div id="drone-hud" class="absolute top-1 left-1 text-[10px] font-mono text-slate-100 bg-black/45 px-1.5 py-1 rounded leading-tight"></div>
+        <!-- Gesture legend overlay (bottom-right) so viewers can read the controls -->
+        <div id="gesture-legend"
+             class="absolute bottom-1 right-1 bg-black/55 backdrop-blur-sm rounded-md px-2 py-1.5 text-[9px] leading-tight text-slate-200 border border-slate-600/50">
+          <div class="text-[9px] font-bold text-cyan-300 mb-0.5 uppercase tracking-wide">Gesture Controls</div>
+          <div class="grid grid-cols-[auto_1fr] gap-x-1.5 gap-y-0.5">
+            <span>☝️ point ↑↓←→</span><span class="text-slate-400">Ascend / Descend / Strafe</span>
+            <span>✌️ point ↑ / ↓</span><span class="text-slate-400">Forward / Backward</span>
+            <span>🤟 lean ← / →</span><span class="text-slate-400">Rotate CCW / CW</span>
+            <span>✊ fist</span><span class="text-slate-400">Hover (stop)</span>
+            <span>🖐️ hold 0.8s</span><span class="text-slate-400">Arm / Disarm</span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -231,9 +244,11 @@ brainScene.add(new THREE.Mesh(new THREE.SphereGeometry(3.0, 32, 24), shellMat));
   brainScene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({size:0.02,color:0x445576, transparent:true, opacity:0.5})));
 }
 
-let brainPoints = null;      // THREE.Points  (per-neuron)
-let brainColorsAttr = null;  // BufferAttribute
-let brainSizeAttr   = null;  // BufferAttribute
+let brainPoints = null;      // THREE.Points  (somas)
+let brainColorsAttr = null;  // BufferAttribute for somas
+let brainSizeAttr   = null;  // BufferAttribute for somas
+let brainArborMesh  = null;  // THREE.LineSegments (dendritic & axonal morphology arbors)
+let arborColorsAttr = null;  // BufferAttribute for arbors
 
 // -------- Signal-propagation between regions ---------------------------------
 // Curved pathways between region centroids, plus animated pulse "photons"
@@ -382,11 +397,107 @@ async function setupBrain() {
     vertexColors: true,
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
     sizeAttenuation: true,
   });
   brainPoints = new THREE.Points(geom, mat);
   brainScene.add(brainPoints);
+
+  // ---- Neuronal Morphology: Dendritic Trees & Axonal Projections ----
+  // To transform the visualization from a sparse point-cloud of dots into
+  // a living neural system with authentic morphology (soma -> primary neurite ->
+  // branched dendrites & projection axons), we generate branching trees anchored
+  // at each soma coordinate, oriented according to anatomical neuropil flow.
+  {
+    const arborSegments = [];   // pairs of 3D points [p0, p1, p1, p2, ...]
+    const arborColors   = [];   // RGB per vertex
+
+    // Generate morphological branching for every sampled neuron
+    for (let i = 0; i < nSub; i++) {
+      const sx = brainPositions[3*i];
+      const sy = brainPositions[3*i+1];
+      const sz = brainPositions[3*i+2];
+      const ri = brainRegionIdx[i];
+      const rgb = (ri >= 0 && regionByIdx[ri]) ? regionByIdx[ri].color : [0.5, 0.5, 0.7];
+
+      // Seeded deterministic orientation for this neuron's arbor
+      const seed = i * 19.349 + 13.17;
+      const rnd1 = Math.sin(seed) * 43758.5453 % 1;
+      const rnd2 = Math.cos(seed * 1.3) * 23421.631 % 1;
+      const rnd3 = Math.sin(seed * 2.7) * 54321.123 % 1;
+
+      // Primary neurite vector (radiates outward / toward synaptic neuropil)
+      const primaryLen = 0.04 + Math.abs(rnd1) * 0.05;
+      let dirX = (Math.abs(rnd1) - 0.5) * 2;
+      let dirY = (Math.abs(rnd2) - 0.5) * 2;
+      let dirZ = (Math.abs(rnd3) - 0.5) * 2;
+      const dLen = Math.hypot(dirX, dirY, dirZ) || 1;
+      dirX /= dLen; dirY /= dLen; dirZ /= dLen;
+
+      const p1x = sx + dirX * primaryLen;
+      const p1y = sy + dirY * primaryLen;
+      const p1z = sz + dirZ * primaryLen;
+
+      // Soma -> Primary trunk segment
+      arborSegments.push(sx, sy, sz, p1x, p1y, p1z);
+      arborColors.push(rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2]);
+
+      // Dendritic arbor: 2 to 4 bifurcated branches
+      const nDendrites = 2 + Math.floor(Math.abs(rnd2) * 3);
+      for (let b = 0; b < nDendrites; b++) {
+        const bSeed = seed + b * 7.71;
+        const bRndX = (Math.sin(bSeed * 1.1) % 1);
+        const bRndY = (Math.cos(bSeed * 2.3) % 1);
+        const bRndZ = (Math.sin(bSeed * 3.7) % 1);
+        const bLen = 0.025 + Math.abs(bRndX) * 0.04;
+
+        // Branch 1 (first bifurcation)
+        const d1x = p1x + (dirX * 0.4 + bRndX * 0.7) * bLen;
+        const d1y = p1y + (dirY * 0.4 + bRndY * 0.7) * bLen;
+        const d1z = p1z + (dirZ * 0.4 + bRndZ * 0.7) * bLen;
+        arborSegments.push(p1x, p1y, p1z, d1x, d1y, d1z);
+        arborColors.push(rgb[0]*0.9, rgb[1]*0.9, rgb[2]*0.9, rgb[0]*0.75, rgb[1]*0.75, rgb[2]*0.75);
+
+        // Sub-terminal dendritic spine / arbor tip
+        const d2x = d1x + (bRndY * 0.6) * (bLen * 0.6);
+        const d2y = d1y + (bRndZ * 0.6) * (bLen * 0.6);
+        const d2z = d1z + (bRndX * 0.6) * (bLen * 0.6);
+        arborSegments.push(d1x, d1y, d1z, d2x, d2y, d2z);
+        arborColors.push(rgb[0]*0.75, rgb[1]*0.75, rgb[2]*0.75, rgb[0]*0.55, rgb[1]*0.55, rgb[2]*0.55);
+      }
+
+      // Axonal projection: elongated collateral projecting toward neuropil core
+      const axonLen = 0.06 + Math.abs(rnd3) * 0.08;
+      const axX = sx - dirX * axonLen;
+      const axY = sy - dirY * axonLen;
+      const axZ = sz - dirZ * axonLen;
+      arborSegments.push(sx, sy, sz, axX, axY, axZ);
+      arborColors.push(rgb[0], rgb[1], rgb[2], rgb[0]*0.8, rgb[1]*0.8, rgb[2]*0.8);
+
+      // Axon terminal branching
+      const axTermX = axX + (rnd2 * 0.5) * (axonLen * 0.4);
+      const axTermY = axY + (rnd3 * 0.5) * (axonLen * 0.4);
+      const axTermZ = axZ + (rnd1 * 0.5) * (axonLen * 0.4);
+      arborSegments.push(axX, axY, axZ, axTermX, axTermY, axTermZ);
+      arborColors.push(rgb[0]*0.8, rgb[1]*0.8, rgb[2]*0.8, rgb[0]*0.5, rgb[1]*0.5, rgb[2]*0.5);
+    }
+
+    const arborGeom = new THREE.BufferGeometry();
+    arborGeom.setAttribute('position', new THREE.Float32BufferAttribute(arborSegments, 3));
+    arborColorsAttr = new THREE.Float32BufferAttribute(arborColors, 3);
+    arborGeom.setAttribute('color', arborColorsAttr);
+
+    const arborMat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.35,
+      blending: THREE.NormalBlending,
+      depthWrite: false,
+    });
+    brainArborMesh = new THREE.LineSegments(arborGeom, arborMat);
+    brainScene.add(brainArborMesh);
+    console.log(`[brain] constructed neuronal morphology with ${arborSegments.length / 6} neurite branches`);
+  }
 
   // ---- Anatomical neuropil shells (real FlyWire soma convex hulls) ----
   // The server sends a triangulated convex hull of every region's real soma
@@ -753,14 +864,28 @@ const neuralChart = new Chart(chartCtx, {
     plugins:{ legend:{ labels:{ color:'#e6edf7', boxWidth:8, font:{size:10} }, position:'bottom' } },
   }
 });
+let CHART_KEYS = [];   // region key per dataset index (parallel to datasets)
 function ensureChartSeries() {
   if (neuralChart.data.datasets.length) return;
+  CHART_KEYS = [];
   Object.values(REGION_META_BY_KEY).forEach(r => {
     const rgb = `rgb(${(r.color[0]*255)|0},${(r.color[1]*255)|0},${(r.color[2]*255)|0})`;
     neuralChart.data.datasets.push({
       label: r.label.split(' (')[0], data: Array(HISTORY_LEN).fill(0),
       borderColor: rgb, backgroundColor: rgb, borderWidth: 1.4, pointRadius: 0, tension:0.25,
     });
+    CHART_KEYS.push(r.key);
+  });
+  neuralChart.update('none');
+}
+function updateNeuralChart(pkt) {
+  if (!neuralChart.data.datasets.length) ensureChartSeries();
+  const rr = pkt.region_rates || {};
+  neuralChart.data.datasets.forEach((ds, i) => {
+    const key = CHART_KEYS[i];
+    const val = rr[key] || 0;
+    ds.data.push(val);
+    if (ds.data.length > HISTORY_LEN) ds.data.shift();
   });
   neuralChart.update('none');
 }
@@ -877,6 +1002,7 @@ function applyPacket(pkt) {
   $('txt-time').textContent = pkt.t.toFixed(1);
   updateStats(pkt);
   updateMotor(pkt.cmd);
+  updateNeuralChart(pkt);
 
   // brain colour/size updated from per-neuron activity
   if (brainPoints && pkt.activity && brainColorsAttr) {
@@ -884,19 +1010,45 @@ function applyPacket(pkt) {
     const nSub = brainRegionIdx.length;
     const colors = brainColorsAttr.array;
     const sizes  = brainSizeAttr.array;
+    const arborCols = arborColorsAttr ? arborColorsAttr.array : null;
+
     for (let i=0;i<nSub;i++) {
       const fullIdx = brainKeepList[i];
       const a = Math.min(1.0, Math.max(0, act[fullIdx] * 12.0));
       const ri = brainRegionIdx[i];
       const base = (ri >= 0) ? REGION_META_BY_KEY_LIST[ri].color : [0.4,0.4,0.55];
-      // brighten with activity toward warm-white
-      colors[3*i]   = base[0] + a*(1.0 - base[0]);
-      colors[3*i+1] = base[1] + a*(0.85 - base[1]);
-      colors[3*i+2] = base[2] + a*(0.4  - base[2]);
+      // Preserve the region HUE while brightening with activity. We scale the
+      // colour so its brightest channel rises with activity, but never clamp
+      // individual channels independently (that's what turned everything white).
+      const maxc = Math.max(base[0], base[1], base[2], 1e-3);
+      const targetPeak = 0.35 + a * 0.65;            // 0.35 (idle) → 1.0 (peak)
+      const scale = targetPeak / maxc;               // lifts brightest channel to targetPeak
+      const r = base[0] * scale;
+      const g = base[1] * scale;
+      const b = base[2] * scale;
+      colors[3*i]   = r;
+      colors[3*i+1] = g;
+      colors[3*i+2] = b;
       sizes[i] = 0.12 + a*0.55;
+
+      // Also illuminate all dendritic and axonal arbor branches for this neuron
+      if (arborCols) {
+        // Each neuron has ~14 vertices (soma->trunk, dendrite branches, axon)
+        // Stride is dynamically tracked in arborColors
+        const baseArborIdx = i * 28 * 3; // 14 segments * 2 vertices = 28 vertices * 3 RGB
+        if (baseArborIdx + 84 <= arborCols.length) {
+          for (let v = 0; v < 28; v++) {
+            const vIdx = baseArborIdx + v * 3;
+            arborCols[vIdx]   = r * (0.6 + a * 0.4);
+            arborCols[vIdx+1] = g * (0.6 + a * 0.4);
+            arborCols[vIdx+2] = b * (0.6 + a * 0.4);
+          }
+        }
+      }
     }
     brainColorsAttr.needsUpdate = true;
     brainSizeAttr.needsUpdate   = true;
+    if (arborColorsAttr) arborColorsAttr.needsUpdate = true;
   }
 
   // ---- Spawn signal pulses along pathways when a source region fires ----
@@ -915,6 +1067,10 @@ function applyPacket(pkt) {
     left:       { 'region_optic_lobe→region_central_complex': 3.0,
                   'region_central_complex→region_motor':     3.0 },
     right:      { 'region_optic_lobe→region_central_complex': 3.0,
+                  'region_central_complex→region_motor':     3.0 },
+    forward:    { 'region_optic_lobe→region_central_complex': 3.0,
+                  'region_central_complex→region_motor':     3.0 },
+    backward:   { 'region_optic_lobe→region_central_complex': 3.0,
                   'region_central_complex→region_motor':     3.0 },
     rotate_cw:  { 'region_mushroom_body→region_central_complex': 3.0,
                   'region_mushroom_body→region_motor':          3.0 },
@@ -978,10 +1134,12 @@ function applyPacket(pkt) {
           if (ri < 0) continue;
           const key = REGION_META_BY_KEY_LIST[ri]?.key;
           if (!sourceRegions.has(key)) continue;
-          // add a warm-white glow on top of the existing colour
-          colors[3*i]   = Math.min(1.0, colors[3*i]   + 0.35 * flash);
-          colors[3*i+1] = Math.min(1.0, colors[3*i+1] + 0.25 * flash);
-          colors[3*i+2] = Math.min(1.0, colors[3*i+2] + 0.10 * flash);
+          // Brighten the source-region neurons in their OWN hue (multiply),
+          // not by adding white — keeps the colour identity while pulsing.
+          const boost = 1.0 + 0.6 * flash;
+          colors[3*i]   = Math.min(1.0, colors[3*i]   * boost);
+          colors[3*i+1] = Math.min(1.0, colors[3*i+1] * boost);
+          colors[3*i+2] = Math.min(1.0, colors[3*i+2] * boost);
           sizes[i] = Math.max(sizes[i], 0.28 + 0.25 * flash);
         }
         brainColorsAttr.needsUpdate = true;
@@ -1020,7 +1178,7 @@ function applyPacket(pkt) {
     const sign = (i % 2 === 0) ? 1.0 : -1.0;
     b.rotation.y += sign * (0.6 + 4.5 * rpm01);
     if (drone.blurs && drone.blurs[i]) {
-      const op = Math.max(0.0, Math.min(0.55, (rpm01 - 0.35) * 1.2));
+      const op = Math.max(0.0, Math.min(0.55, (rpm01 -   0.35) * 1.2));
       drone.blurs[i].material.opacity = op;
       b.visible = rpm01 < 0.6;   // hide sharp blades at high RPM (motion blur takes over)
     }
@@ -1032,7 +1190,6 @@ function applyPacket(pkt) {
   if (trajCount < TRAJ_MAX) {
     trajCount++;
   } else {
-    // shift left by one point (drop oldest)
     trajPositions.copyWithin(0, 3, TRAJ_MAX*3);
   }
   const j = trajCount - 1;
@@ -1082,7 +1239,11 @@ function connectWS() {
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
   ws = new WebSocket(url);
   ws.onmessage = ev => {
-    try { applyPacket(JSON.parse(ev.data)); } catch (e) { console.error(e); }
+    try {
+      const pkt = JSON.parse(ev.data);
+      applyPacket(pkt);
+      if (window.Sonify && window.Sonify.isOn()) window.Sonify.update(pkt);
+    } catch (e) { console.error(e); }
     fpsCount++;
     const now = performance.now();
     if (now - fpsT0 > 1000) {
@@ -1122,14 +1283,25 @@ async function startWebcam() {
 function classifyHandGesture(landmarks) {
   // landmarks are 21 normalized points {x,y,z}.  We derive a hand-local
   // coordinate frame so finger-extension and pointing direction are
-  // *rotation-invariant* (previous version only worked with an upright hand).
+  // *rotation-invariant* (works with the hand held at any angle).
+  //
+  // DESIGN: finger COUNT is the most robust signal MediaPipe gives us, so it
+  // is the PRIMARY discriminator (which command family). The POINTING vector
+  // (average direction of the extended fingers) is the SECONDARY signal that
+  // picks the specific direction. Each pose is distinct by finger count, so
+  // there's no ambiguity between families:
+  //   ☝️ 1 finger  → point up/down/left/right      (Ascend/Descend/Strafe)
+  //   ✌️ 2 fingers → point up/down                  (Forward/Backward)
+  //   🤟 3 fingers → lean left/right                (Rotate CCW/CW)
+  //   ✊ fist       → hover (no command)
+  //   🖐️ 5 (thumb) → Arm/Disarm toggle (needs a hold)
   const wrist = landmarks[0];
   const midMcp = landmarks[9];                  // middle-finger base
-  // Palm "up" axis (wrist → middle MCP), normalized
+  // Palm "up" axis (wrist → middle MCP), normalized — used for extension test.
   let ux = midMcp.x - wrist.x, uy = midMcp.y - wrist.y;
   const uL = Math.hypot(ux, uy) || 1e-6;
   ux /= uL; uy /= uL;
-  // Palm size scale (used to normalise distances)
+  // Palm size scale (used to normalise distances).
   const palm = Math.hypot(landmarks[5].x - landmarks[17].x,
                           landmarks[5].y - landmarks[17].y) || 1e-6;
   // A finger is "extended" when its tip is farther from the wrist along the
@@ -1138,7 +1310,7 @@ function classifyHandGesture(landmarks) {
   const extended = (tip, pip) => {
     const tProj = (landmarks[tip].x - wrist.x) * ux + (landmarks[tip].y - wrist.y) * uy;
     const pProj = (landmarks[pip].x - wrist.x) * ux + (landmarks[pip].y - wrist.y) * uy;
-    return (tProj - pProj) / palm > 0.15;
+    return (tProj - pProj) / palm > 0.12;
   };
   const idxUp   = extended(8, 6);
   const midUp   = extended(12, 10);
@@ -1151,51 +1323,72 @@ function classifyHandGesture(landmarks) {
     landmarks[4].y - landmarks[5].y,
   ) / palm > 0.55;
 
-  // Angle of the palm-up axis in the image (0=right, 90=up, ±180=left, -90=down)
-  const ang = Math.atan2(-uy, ux) * 180/Math.PI;
+  // Pointing vector = average of each EXTENDED finger's (tip − PIP) direction.
+  // This tracks where the fingers actually point, which is far more stable and
+  // intuitive than tilting the whole palm. Falls back to the palm axis (fist).
+  let pvx = 0, pvy = 0, nDir = 0;
+  const addDir = (tip, pip, on) => {
+    if (!on) return;
+    pvx += landmarks[tip].x - landmarks[pip].x;
+    pvy += landmarks[tip].y - landmarks[pip].y;
+    nDir++;
+  };
+  addDir(8, 6, idxUp); addDir(12, 10, midUp);
+  addDir(16, 14, ringUp); addDir(20, 18, pinkyUp);
+  if (nDir === 0) { pvx = ux; pvy = uy; }
+  // Angle of the pointing vector in the image (0=right, 90=up, ±180=left, -90=down)
+  const ang = Math.atan2(-pvy, pvx) * 180 / Math.PI;
 
-  // HIGH-FIVE (all 4 fingers extended, thumb spread) toggles ARM / DISARM.
-  // Note: pointing direction doesn't matter for the toggle — that's what
-  // distinguishes it from the UP flight command, which requires only 3+
-  // fingers extended (typical open-palm) *without* the thumb spread.
-  if (openCount === 4 && thumbSpread) {
+  // ---- ARM / DISARM: full open hand (4 fingers) WITH the thumb splayed. ----
+  // Requires the thumb, which no flight gesture uses, so it can't be confused
+  // with a flight command. The state machine also requires a ~0.8s hold.
+  if (openCount >= 4 && thumbSpread) {
     return { gesture: 'arm_toggle', confidence: 0.95 };
   }
 
-  // Flight gestures — direction comes from `ang` (palm-up axis in image)
-  //   3+ fingers extended, thumb NOT spread → UP/DOWN/LEFT/RIGHT by palm angle
-  //   0-1 fingers extended (fist) → ROTATE_CW / _CCW by tilt direction
-  //   single index finger extended → also directional
-  let g = 'none';
-  const dirFromAngle = () => {
-    if (ang > 45 && ang < 135)         return 'up';
-    if (ang < -45 && ang > -135)       return 'down';
-    if (ang >= 135 || ang <= -135)     return 'left';
+  // ---- Flight gestures, chosen by finger count then pointing direction ----
+  const dir4 = () => {
+    if (ang > 45 && ang <= 135)     return 'up';
+    if (ang <= -45 && ang > -135)   return 'down';
+    if (ang > 135 || ang <= -135)   return 'left';
     return 'right';
   };
-  if (openCount >= 3) {
-    g = dirFromAngle();
-  } else if (openCount === 0) {
-    g = ang >= 0 ? 'rotate_cw' : 'rotate_ccw';
-  } else if (idxUp && !midUp && !ringUp && !pinkyUp) {
-    g = dirFromAngle();
+  let g = 'none', conf = 0.7;
+  if (openCount === 1 && idxUp) {
+    // ☝️ Single index finger points the way: up / down / left / right.
+    g = dir4();
+    conf = 0.85;
+  } else if (openCount === 2 && idxUp && midUp) {
+    // ✌️ Peace sign pointing up = forward, pointing down = backward.
+    g = (ang >= 0) ? 'forward' : 'backward';
+    conf = 0.85;
+  } else if (openCount === 3 && idxUp && midUp && ringUp) {
+    // 🤟 Three fingers leaning right = rotate CW, leaning left = rotate CCW.
+    g = (Math.cos(ang * Math.PI / 180) >= 0) ? 'rotate_cw' : 'rotate_ccw';
+    conf = 0.8;
+  } else {
+    // ✊ Fist or any other / transitional pose → hover in place.
+    g = 'none';
   }
-  return { gesture: g, confidence: 0.6 + 0.1 * openCount };
+  return { gesture: g, confidence: conf };
 }
 
 // ---- Temporal smoothing so single-frame misfires don't jitter the drone ----
+// A longer window + higher agreement makes control feel steadier and prevents
+// the transient finger counts you pass through while changing poses (e.g.
+// fist → open hand) from firing spurious one-off commands.
 const GESTURE_HISTORY = [];
-const GESTURE_HISTORY_LEN = 5;   // ~150 ms at 30 fps
+const GESTURE_HISTORY_LEN = 8;   // ~260 ms at 30 fps
 let LAST_SENT_GESTURE = 'none';
 function smoothGesture(g) {
   GESTURE_HISTORY.push(g.gesture);
   if (GESTURE_HISTORY.length > GESTURE_HISTORY_LEN) GESTURE_HISTORY.shift();
-  // Majority vote — need >=60% agreement or we keep the previous stable one.
+  // Majority vote — need >=62% agreement or we keep the previous stable one.
   const counts = {};
   GESTURE_HISTORY.forEach(x => { counts[x] = (counts[x] || 0) + 1; });
   let best = LAST_SENT_GESTURE, bestN = 0;
   for (const k in counts) if (counts[k] > bestN) { best = k; bestN = counts[k]; }
-  const stable = bestN / GESTURE_HISTORY.length >= 0.6;
+  const stable = bestN / GESTURE_HISTORY.length >= 0.62;
   if (stable) LAST_SENT_GESTURE = best;
   return { gesture: LAST_SENT_GESTURE,
            confidence: stable ? g.confidence : 0.4 * g.confidence };
@@ -1241,7 +1434,6 @@ function armStateMachine(g) {
 
 function drawHandOverlay(landmarks) {
   const w = camOverlay.clientWidth, h = camOverlay.clientHeight;
-  camOverlay.width = w; camOverlay.height = h;
   camOverlayCtx.clearRect(0,0,w,h);
   // MediaPipe returns landmarks in normalized coords of the *flipped* video (we don't flip).
   // Draw connectors:
@@ -1325,7 +1517,7 @@ async function startMediapipe() {
 function stopSim() { if (simInterval) { clearInterval(simInterval); simInterval = null; } }
 function startSim() {
   stopSim();
-  const seq = ['up','up','up','none','right','right','none','rotate_cw','down','none','left','left'];
+  const seq = ['up','up','forward','forward','none','right','right','rotate_cw','forward','down','none','left','backward','backward'];
   let i = 0;
   simInterval = setInterval(() => {
     const g = seq[i++ % seq.length];
@@ -1420,6 +1612,146 @@ function renderLoop() {
   requestAnimationFrame(renderLoop);
 }
 renderLoop();
+
+// ============================================================
+// Neural sonification — maps region firing rates + gesture to
+// live audio via WebAudio. Toggle with the 🔊 button in header.
+// ============================================================
+const Sonify = (() => {
+  let ctx = null, master = null, on = false;
+  // Voices
+  let padOsc, padFilt, padGain;         // optic_lobe → pad
+  let stateOsc, stateGain;              // central_complex → sine tone
+  let shimmerOsc, shimmerGain;          // mushroom_body → triangle shimmer
+  let motorGain, motorPan;              // motor → click bus
+  let clickTimer = 0;
+
+  function start() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain(); master.gain.value = 0.25; master.connect(ctx.destination);
+
+    // --- Pad (optic lobe): sawtooth through low-pass
+    padOsc  = ctx.createOscillator(); padOsc.type = 'sawtooth'; padOsc.frequency.value = 110;
+    padFilt = ctx.createBiquadFilter(); padFilt.type = 'lowpass'; padFilt.frequency.value = 300; padFilt.Q.value = 6;
+    padGain = ctx.createGain(); padGain.gain.value = 0.0;
+    padOsc.connect(padFilt).connect(padGain).connect(master); padOsc.start();
+
+    // --- State tone (central complex): sine
+    stateOsc  = ctx.createOscillator(); stateOsc.type = 'sine'; stateOsc.frequency.value = 220;
+    stateGain = ctx.createGain(); stateGain.gain.value = 0.0;
+    stateOsc.connect(stateGain).connect(master); stateOsc.start();
+
+    // --- Shimmer (mushroom body): triangle, detuned
+    shimmerOsc  = ctx.createOscillator(); shimmerOsc.type = 'triangle'; shimmerOsc.frequency.value = 660;
+    shimmerGain = ctx.createGain(); shimmerGain.gain.value = 0.0;
+    shimmerOsc.connect(shimmerGain).connect(master); shimmerOsc.start();
+
+    // --- Motor click bus (panned by L/R motor balance)
+    motorPan  = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    motorGain = ctx.createGain(); motorGain.gain.value = 0.6;
+    if (motorPan) { motorGain.connect(motorPan).connect(master); } else { motorGain.connect(master); }
+    on = true;
+  }
+
+  function stop() {
+    if (!ctx) return;
+    try { padOsc.stop(); stateOsc.stop(); shimmerOsc.stop(); } catch(e) {}
+    ctx.close();
+    ctx = null; on = false;
+  }
+
+  function click(pan) {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 180;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.35, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+    let node = o.connect(g);
+    if (motorPan) { const p = ctx.createStereoPanner(); p.pan.value = pan; g.connect(p).connect(master); }
+    else          { g.connect(master); }
+    o.start(t); o.stop(t + 0.1);
+  }
+
+  function update(pkt) {
+    if (!on || !ctx) return;
+    const rr = pkt.region_rates || {};
+    const opt = rr.region_optic_lobe || 0;
+    const cc  = rr.region_central_complex || 0;
+    const mb  = rr.region_mushroom_body || 0;
+    const mot = rr.region_motor || 0;
+    const g   = (pkt.gesture || 'none').toLowerCase();
+    const conf = pkt.confidence || 0;
+    const armed = conf > 0.15 && g !== 'none';
+    const now = ctx.currentTime;
+
+    // When the drone is DISARMED (or no active gesture) the brain is idle from
+    // a control standpoint, so silence every voice and stop emitting clicks.
+    // Without this, residual region firing rates keep the pad/tone/shimmer and
+    // motor clicks audible even though the drone isn't flying.
+    if (!armed) {
+      padGain.gain.setTargetAtTime(0.0, now, 0.1);
+      stateGain.gain.setTargetAtTime(0.0, now, 0.1);
+      shimmerGain.gain.setTargetAtTime(0.0, now, 0.1);
+      clickTimer = 0;   // no motor clicks while disarmed
+      return;
+    }
+
+    // Gesture-driven pitch/pan offsets
+    let pitchMul = 1.0, pan = 0.0, glide = 0.0;
+    if (armed) {
+      if (g === 'up')       pitchMul = 1.5;
+      else if (g === 'down')pitchMul = 0.7;
+      else if (g === 'left') pan = -0.8;
+      else if (g === 'right')pan = +0.8;
+      else if (g === 'forward')  pitchMul = 1.25;
+      else if (g === 'backward') pitchMul = 0.85;
+      else if (g === 'rot_cw') glide = +40;
+      else if (g === 'rot_ccw')glide = -40;
+    }
+
+    // Pad: optic lobe drives filter cutoff + gain
+    const cutoff = 200 + Math.min(1, opt / 80) * 2200;
+    padFilt.frequency.setTargetAtTime(cutoff, now, 0.08);
+    padGain.gain.setTargetAtTime(0.05 + Math.min(0.25, opt / 120), now, 0.15);
+
+    // State tone: CC firing → pitch + gain
+    const baseF = 180 + Math.min(1, cc / 60) * 260;
+    stateOsc.frequency.setTargetAtTime((baseF + glide) * pitchMul, now, 0.05);
+    stateGain.gain.setTargetAtTime(0.03 + Math.min(0.18, cc / 100), now, 0.1);
+
+    // Shimmer: MB firing → gain + detune
+    shimmerOsc.frequency.setTargetAtTime((660 + Math.min(1, mb / 40) * 500) * pitchMul, now, 0.05);
+    shimmerGain.gain.setTargetAtTime(Math.min(0.10, mb / 200), now, 0.1);
+
+    // Motor: click rate ∝ firing rate, panned by gesture
+    if (motorPan) motorPan.pan.setTargetAtTime(pan, now, 0.05);
+    const clicksPerSec = Math.min(14, mot / 5);
+    clickTimer += clicksPerSec * (1 / 15);   // WS ~15 fps
+    while (clickTimer >= 1) { click(pan); clickTimer -= 1; }
+  }
+
+  function toggle() {
+    const btn = document.getElementById('btn-sonify');
+    if (on) { stop(); btn.textContent = '🔊 Sonify: OFF'; btn.classList.remove('text-emerald-300'); }
+    else    { start(); btn.textContent = '🔊 Sonify: ON';  btn.classList.add('text-emerald-300'); }
+  }
+
+  return { toggle, update, isOn: () => on };
+})();
+
+document.getElementById('btn-sonify').addEventListener('click', Sonify.toggle);
+window.Sonify = Sonify;
+
+// Hook sonifier into the WebSocket packet stream (non-invasive wrapper).
+(function wrapPacket() {
+  const orig = window.applyPacket || applyPacket;
+  window.applyPacket = function(pkt) {
+    orig(pkt);
+    try { Sonify.update(pkt); } catch(e) { console.warn('sonify', e); }
+  };
+})();
 </script>
 </body>
 </html>

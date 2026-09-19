@@ -87,6 +87,7 @@ class SimulationWorld:
         "up": Gesture.UP, "down": Gesture.DOWN,
         "left": Gesture.LEFT, "right": Gesture.RIGHT,
         "rotate_cw": Gesture.ROTATE_CW, "rotate_ccw": Gesture.ROTATE_CCW,
+        "forward": Gesture.FORWARD, "backward": Gesture.BACKWARD,
         "none": Gesture.NONE, "": Gesture.NONE,
     }
 
@@ -140,7 +141,7 @@ class SimulationWorld:
         self._current_gesture = self.GESTURE_LOOKUP.get(name, Gesture.NONE)
         self._current_conf = float(np.clip(confidence, 0.0, 1.0))
 
-    def brain_payload(self, subsample: int = 15000) -> dict:
+    def brain_payload(self, subsample: int = 6000) -> dict:
         """One-time payload of neuron positions + region tags for the client."""
         N = self.N
         if N > subsample:
@@ -343,9 +344,9 @@ class SimulationWorld:
         import math as _math
         G = self._current_gesture
         c = self._current_conf
-        v_lin = 2.5 * c                     # m/s
-        v_yaw = 1.2 * c                     # rad/s
-        v_z   = 1.8 * c                     # m/s
+        v_lin = 4.5 * c                     # m/s (horizontal strafe / forward)
+        v_yaw = 2.0 * c                     # rad/s
+        v_z   = 3.0 * c                     # m/s (climb / descend)
         tgt_vx = tgt_vy = tgt_vz = 0.0
         tgt_wz = 0.0
         # "forward" in world frame given current yaw
@@ -354,6 +355,8 @@ class SimulationWorld:
         elif G == Gesture.DOWN:       tgt_vz = -v_z
         elif G == Gesture.LEFT:       tgt_vx = -sy * v_lin; tgt_vy =  cy * v_lin
         elif G == Gesture.RIGHT:      tgt_vx =  sy * v_lin; tgt_vy = -cy * v_lin
+        elif G == Gesture.FORWARD:    tgt_vx =  cy * v_lin; tgt_vy =  sy * v_lin
+        elif G == Gesture.BACKWARD:   tgt_vx = -cy * v_lin; tgt_vy = -sy * v_lin
         elif G == Gesture.ROTATE_CW:  tgt_wz = -v_yaw
         elif G == Gesture.ROTATE_CCW: tgt_wz = +v_yaw
         if idle:
