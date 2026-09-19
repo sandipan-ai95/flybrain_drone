@@ -11,6 +11,11 @@ data/raw/*
 data/processed/*
 data/annotations/*
 !data/**/.gitkeep
+# But DO ship the compressed FlyWire connectome CSVs (~56 MB total) so the
+# deployed dashboard can render the real FAFB v783 fly brain, not the tiny
+# synthetic gesture-net fallback.
+!data/raw/flywire/
+!data/raw/flywire/*.csv.gz
 experiments/*/
 !experiments/.gitkeep
 .DS_Store
