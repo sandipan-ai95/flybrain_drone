@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+data/raw/*
+data/processed/*
+data/annotations/*
+!data/**/.gitkeep
+experiments/*/
+!experiments/.gitkeep
+.DS_Store

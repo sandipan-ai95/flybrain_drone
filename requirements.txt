@@ -1,0 +1,12 @@
+# Runtime dependencies for the FlyBrain Drone dashboard server.
+# Kept minimal on purpose: gesture detection + Three.js run in the browser,
+# so we don't need opencv/mediapipe on the server.
+numpy>=1.24
+scipy>=1.11
+pyyaml>=6.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+websockets>=12.0
+# Connectome / data helpers used at import time by some modules
+pandas>=2.1
+requests>=2.31

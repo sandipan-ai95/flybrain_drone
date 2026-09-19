@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flybrain-drone"
+version = "0.1.0"
+description = "Fly-connectome-inspired autonomous drone simulation (research)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "FlyBrain Drone contributors" }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-cov", "ruff"]
+sim = ["pybullet>=3.2.5"]
+ml  = ["torch>=2.1"]
+viz = ["plotly>=5.20", "dash>=2.16", "networkx>=3.2", "matplotlib>=3.8"]
+data = ["pandas>=2.1", "h5py>=3.10", "requests>=2.31"]
+gesture = ["opencv-python>=4.8", "mediapipe>=0.10.33,<1.0", "matplotlib>=3.8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

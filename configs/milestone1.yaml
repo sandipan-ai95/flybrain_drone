@@ -1,0 +1,28 @@
+# Milestone-1 default experiment configuration.
+experiment:
+  name: milestone1_synthetic_hover
+
+connectome:
+  dataset: synthetic
+  population: visual_motor_subgraph
+  n_visual: 64
+  n_inter: 128
+  n_motor: 8
+
+neural_model:
+  type: lif
+  timestep_ms: 1
+
+visual_encoder:
+  resolution: [16, 16]
+  channels: [brightness, motion]
+
+drone:
+  simulator: simple_physics
+  dt: 0.01
+
+controller:
+  type: population_decoder
+
+seed: 42
+steps: 500

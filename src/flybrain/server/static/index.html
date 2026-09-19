@@ -1,0 +1,1425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>FlyBrain Drone — Real-time Neural Simulation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466124/drawing_utils.min.js" crossorigin="anonymous"></script>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height:100%; overflow:hidden; }
+  body { background:#0b1220; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+  .panel { background: linear-gradient(180deg,#0f172a 0%, #0c1428 100%); border:1px solid #233149; border-radius:12px; box-shadow: 0 10px 30px -12px rgba(0,0,0,0.6); }
+  .chip  { background:#0f172a; border:1px solid #233149; border-radius:10px; }
+  .glow  { text-shadow: 0 0 10px rgba(34,211,238,0.6); }
+  .bar   { transition: width 120ms linear; }
+  canvas.brain { width:100%; height:100%; display:block; }
+  /* Scrollbars hidden but tiny lists can still scroll if truly needed */
+  .no-scrollbar::-webkit-scrollbar { display:none; }
+</style>
+</head>
+<body class="text-slate-200 h-screen overflow-hidden flex flex-col">
+
+<!-- =========== Header =========== -->
+<header class="px-4 pt-2 pb-2 flex items-center justify-between shrink-0">
+  <div>
+    <div class="text-lg font-bold tracking-tight text-white leading-tight">
+      <span class="text-cyan-400">FlyBrain</span> Drone
+      <span class="text-slate-400 font-normal">— Real-time Neural Simulation</span>
+    </div>
+    <div class="text-[10px] text-slate-400">
+      From Vision to Action • Inspired by Drosophila Connectome (FAFB v783)
+    </div>
+  </div>
+  <div class="flex items-center gap-2">
+    <div id="badge-status" class="flex items-center gap-2 chip px-2.5 py-1 text-xs text-emerald-400">
+      <span class="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span>SIMULATION RUNNING</span>
+    </div>
+    <div class="chip px-2.5 py-1">
+      <span id="arm-badge" class="text-[10px] font-bold text-slate-400">○ DISARMED</span>
+    </div>
+    <div id="badge-time" class="chip px-2.5 py-1 text-[11px] text-slate-300 font-mono">
+      Time: <span id="txt-time">0.0</span>s &nbsp;|&nbsp; FPS: <span id="txt-fps">--</span>
+    </div>
+  </div>
+</header>
+
+<!-- =========== Pipeline strip =========== -->
+<section class="px-4 shrink-0">
+  <div class="grid grid-cols-5 gap-2">
+    <div class="chip px-3 py-1.5 flex items-center gap-2">
+      <div class="h-6 w-6 rounded-md bg-cyan-500/20 grid place-items-center text-cyan-300 text-sm">📷</div>
+      <div><div class="text-xs font-semibold text-white leading-tight">1. Camera Input</div>
+           <div class="text-[10px] text-slate-400">Live / Simulated</div></div>
+    </div>
+    <div class="chip px-3 py-1.5 flex items-center gap-2">
+      <div class="h-6 w-6 rounded-md bg-sky-500/20 grid place-items-center text-sky-300 text-sm">👁</div>
+      <div><div class="text-xs font-semibold text-white leading-tight">2. Visual Encoding</div>
+           <div class="text-[10px] text-slate-400">Retinal features</div></div>
+    </div>
+    <div class="chip px-3 py-1.5 flex items-center gap-2">
+      <div class="h-6 w-6 rounded-md bg-fuchsia-500/20 grid place-items-center text-fuchsia-300 text-sm">🧠</div>
+      <div><div class="text-xs font-semibold text-white leading-tight">3. Fly Brain</div>
+           <div class="text-[10px] text-slate-400">Neural propagation</div></div>
+    </div>
+    <div class="chip px-3 py-1.5 flex items-center gap-2">
+      <div class="h-6 w-6 rounded-md bg-emerald-500/20 grid place-items-center text-emerald-300 text-sm">⚡</div>
+      <div><div class="text-xs font-semibold text-white leading-tight">4. Motor Decoder</div>
+           <div class="text-[10px] text-slate-400">Neural → Control</div></div>
+    </div>
+    <div class="chip px-3 py-1.5 flex items-center gap-2">
+      <div class="h-6 w-6 rounded-md bg-amber-500/20 grid place-items-center text-amber-300 text-sm">🚁</div>
+      <div><div class="text-xs font-semibold text-white leading-tight">5. Drone Control</div>
+           <div class="text-[10px] text-slate-400">Flight in 3D</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- =========== Main grid (fills remaining viewport) =========== -->
+<main class="p-3 pt-2 grid gap-3 flex-1 min-h-0"
+      style="grid-template-columns: minmax(260px,1fr) minmax(500px,2.2fr) minmax(320px,1.3fr);">
+
+  <!-- ===== LEFT column ===== -->
+  <div class="flex flex-col gap-2 min-h-0">
+    <!-- Camera Input -->
+    <section class="panel p-2 flex flex-col min-h-0" style="flex: 1.1 1 0;">
+      <div class="flex items-center justify-between mb-1">
+        <div class="text-xs font-semibold text-white">Camera Input <span class="text-slate-400 font-normal">(Live)</span></div>
+        <div id="gesture-chip" class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/25 text-emerald-200">NONE 0%</div>
+      </div>
+      <div class="relative flex-1 min-h-0 rounded-md overflow-hidden border border-slate-700 bg-black">
+        <video id="cam" class="absolute inset-0 w-full h-full object-cover" autoplay playsinline muted></video>
+        <canvas id="cam-overlay" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+        <div class="absolute bottom-1 left-1 text-[10px] font-mono text-emerald-300 bg-black/60 px-1.5 py-0.5 rounded">
+          <span id="cam-status">initialising…</span>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-1.5 mt-1.5">
+        <button id="btn-live" class="chip py-1 text-[10px] bg-cyan-500/25 text-cyan-100">Live Camera</button>
+        <button id="btn-sim"  class="chip py-1 text-[10px]">Simulated</button>
+      </div>
+    </section>
+
+    <!-- Visual Encoding -->
+    <section class="panel p-2 shrink-0">
+      <div class="text-xs font-semibold text-white mb-1">Visual Encoding</div>
+      <div class="grid grid-cols-3 gap-1.5">
+        <div class="rounded bg-slate-800/60 overflow-hidden">
+          <canvas id="enc-lum" class="w-full block" style="height:70px"></canvas>
+          <div class="text-[9px] text-slate-400 text-center">Luminance</div>
+        </div>
+        <div class="rounded bg-slate-800/60 overflow-hidden">
+          <canvas id="enc-edge" class="w-full block" style="height:70px"></canvas>
+          <div class="text-[9px] text-slate-400 text-center">Edges</div>
+        </div>
+        <div class="rounded bg-slate-800/60 overflow-hidden">
+          <canvas id="enc-flow" class="w-full block" style="height:70px"></canvas>
+          <div class="text-[9px] text-slate-400 text-center">Motion / Flow</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Retinal Map -->
+    <section class="panel p-2 flex flex-col min-h-0" style="flex: 1 1 0;">
+      <div class="text-xs font-semibold text-white mb-1">Neural Input <span class="text-slate-400 font-normal">(Retinal Map)</span></div>
+      <canvas id="retinal-map" class="w-full flex-1 min-h-0 rounded bg-slate-900"></canvas>
+    </section>
+  </div>
+
+  <!-- ===== CENTER column: 3D brain ===== -->
+  <section class="panel p-2 flex flex-col min-h-0">
+    <div class="flex items-center justify-between mb-1">
+      <div class="text-xs font-semibold text-white">Fly Brain — 3D Neural Activity <span class="text-slate-400 font-normal">(FAFB v783)</span></div>
+      <div id="brain-status" class="text-[10px] text-slate-400">loading…</div>
+    </div>
+    <div class="relative flex-1 min-h-0 rounded-md overflow-hidden bg-gradient-to-b from-[#0a0e1e] to-[#050813]">
+      <canvas id="brain3d" class="brain absolute inset-0"></canvas>
+      <div id="region-legend" class="absolute bottom-1 left-1 right-1 flex flex-wrap gap-1 text-[10px]"></div>
+    </div>
+  </section>
+
+  <!-- ===== RIGHT column ===== -->
+  <div class="flex flex-col gap-2 min-h-0">
+    <!-- Drone view -->
+    <section class="panel p-2 flex flex-col min-h-0" style="flex: 1.3 1 0;">
+      <div class="flex items-center justify-between mb-1">
+        <div class="text-xs font-semibold text-white">Drone View <span class="text-slate-400 font-normal">(3D)</span></div>
+        <div class="text-[10px] text-slate-400">Follow cam</div>
+      </div>
+      <div class="relative flex-1 min-h-0 rounded-md overflow-hidden bg-gradient-to-b from-[#141b30] to-[#080b16]">
+        <canvas id="drone3d" class="brain absolute inset-0"></canvas>
+        <div id="drone-hud" class="absolute top-1 left-1 text-[10px] font-mono text-slate-100 bg-black/45 px-1.5 py-1 rounded leading-tight"></div>
+      </div>
+    </section>
+
+    <!-- Neural activity chart -->
+    <section class="panel p-2 flex flex-col min-h-0" style="flex: 1 1 0;">
+      <div class="text-xs font-semibold text-white mb-0.5">Neural Activity <span class="text-slate-400 font-normal">(Real-time)</span></div>
+      <div class="flex-1 min-h-0 relative"><canvas id="chart-neural" class="absolute inset-0"></canvas></div>
+    </section>
+
+    <!-- Motor output + stats side by side -->
+    <section class="grid grid-cols-2 gap-2 shrink-0">
+      <div class="panel p-2">
+        <div class="text-xs font-semibold text-white mb-1">Motor Output</div>
+        <div id="motor-bars" class="space-y-1"></div>
+      </div>
+      <div class="panel p-2">
+        <div class="text-xs font-semibold text-white mb-1">Simulation Stats</div>
+        <div id="sim-stats" class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] font-mono"></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="px-4 pb-2 pt-1 text-[10px] text-slate-500 flex items-center justify-between shrink-0">
+  <div>Drosophila Connectome: FAFB v783 · <span id="stat-neurons-count">--</span> neurons · <span id="stat-edges-count">--</span> synapses</div>
+  <div>Inspired by nature. Built for what's next.</div>
+</footer>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------------------------------------------------------- state / DOM
+const $ = (id) => document.getElementById(id);
+const REGION_META_BY_KEY = {};   // filled after /api/brain
+let ws = null;
+let brainPositions = null;       // Float32Array (Nsub*3)
+let brainRegionIdx = null;       // Int16Array (Nsub)
+let brainKeepList  = null;       // full-index of each sampled neuron
+const HISTORY_LEN  = 200;
+
+// ---------------------------------------------------------- Three.js: brain
+const brainCanvas = $('brain3d');
+const brainRenderer = new THREE.WebGLRenderer({ canvas: brainCanvas, antialias: true, alpha: true });
+brainRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const brainScene = new THREE.Scene();
+const brainCam = new THREE.PerspectiveCamera(40, 1, 0.01, 100);
+brainCam.position.set(0, 0.8, 8.5);
+const brainCtl = new OrbitControls(brainCam, brainCanvas);
+brainCtl.enableDamping = true; brainCtl.autoRotate = true; brainCtl.autoRotateSpeed = 0.25;
+
+// Soft "brain shell" glow: a translucent sphere in the background
+const shellMat = new THREE.MeshBasicMaterial({
+  color: 0x2a3355, transparent: true, opacity: 0.06, side: THREE.BackSide
+});
+brainScene.add(new THREE.Mesh(new THREE.SphereGeometry(3.0, 32, 24), shellMat));
+
+// Ambient starfield for depth
+{
+  const starGeo = new THREE.BufferGeometry();
+  const N = 1200, arr = new Float32Array(N*3);
+  for (let i=0;i<N;i++){ const r=8+Math.random()*4, a=Math.random()*Math.PI*2, b=Math.acos(2*Math.random()-1);
+    arr[3*i]   = r*Math.sin(b)*Math.cos(a);
+    arr[3*i+1] = r*Math.sin(b)*Math.sin(a);
+    arr[3*i+2] = r*Math.cos(b);
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  brainScene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({size:0.02,color:0x445576, transparent:true, opacity:0.5})));
+}
+
+let brainPoints = null;      // THREE.Points  (per-neuron)
+let brainColorsAttr = null;  // BufferAttribute
+let brainSizeAttr   = null;  // BufferAttribute
+
+// -------- Signal-propagation between regions ---------------------------------
+// Curved pathways between region centroids, plus animated pulse "photons"
+// that travel along them whenever a source region's firing rate rises.
+const REGION_CENTROIDS = {};       // key -> THREE.Vector3
+const PATHWAYS = [];               // { from, to, curve, line }
+const PULSES = [];                 // active traveling pulses
+let pulseGeom = null, pulseColorAttr = null, pulseSizeAttr = null, pulsePoints = null;
+const MAX_PULSES = 400;
+const PREV_REGION_RATE = {};       // for detecting activity onset
+// Anatomical-ish flow — matches the "5-stage pipeline" mockup narrative
+const PATHWAY_DEFS = [
+  ['region_optic_lobe',      'region_central_complex'],
+  ['region_optic_lobe',      'region_mushroom_body'],
+  ['region_antennal_lobe',   'region_mushroom_body'],
+  ['region_mushroom_body',   'region_central_complex'],
+  ['region_central_complex', 'region_motor'],
+  ['region_mushroom_body',   'region_motor'],
+  ['region_interneuron',     'region_motor'],
+];
+
+const brainVertShader = `
+  attribute float aSize;
+  attribute vec3  aColor;
+  varying vec3 vColor;
+  void main() {
+    vColor = aColor;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = aSize * (300.0 / -mv.z);
+    gl_Position  = projectionMatrix * mv;
+  }
+`;
+const brainFragShader = `
+  varying vec3 vColor;
+  void main() {
+    vec2 uv = gl_PointCoord - 0.5;
+    float d = length(uv);
+    if (d > 0.5) discard;
+    float alpha = smoothstep(0.5, 0.0, d);
+    gl_FragColor = vec4(vColor, alpha);
+  }
+`;
+
+async function setupBrain() {
+  const r = await fetch('/api/brain'); const data = await r.json();
+  $('brain-status').textContent = `loading brain…`;
+  $('stat-neurons-count').textContent = data.num_total.toLocaleString();
+  data.regions.forEach(r => { REGION_META_BY_KEY[r.key] = r; });
+
+  brainPositions   = new Float32Array(data.positions);
+  brainRegionIdx   = new Int16Array(data.region);
+  brainKeepList    = data.keep;
+  const nSub = data.num_sent;
+  const usingRealCoords = data.pos_source === 'flywire_real';
+  $('brain-status').textContent =
+    `${data.num_sent.toLocaleString()} / ${data.num_total.toLocaleString()} neurons` +
+    (usingRealCoords ? ' · real FlyWire coords' : ' · layout');
+
+  // ------------------------------------------------------------------
+  // If the server did not send real FlyWire coordinates, fall back to a
+  // schematic anatomical lobe layout so the visualization is still legible.
+  // Otherwise, keep the true per-neuron positions from the connectome.
+  // ------------------------------------------------------------------
+  const regionByIdx = data.regions;   // used later regardless of layout mode
+  // LOBES / helper functions are always defined; they're only used by the
+  // fallback layout loop further down when usingRealCoords is false.
+  const LOBES = {
+    // {center [x,y,z], radii [rx,ry,rz]}   (Y = up, X = medio-lateral, Z = A-P)
+    region_optic_lobe:      [[[-2.0, 0.05, 0.0], [0.7, 0.85, 0.8]],   // left  optic lobe
+                             [[ 2.0, 0.05, 0.0], [0.7, 0.85, 0.8]]],  // right optic lobe
+    region_mushroom_body:   [[[-0.75, 0.65, 0.15], [0.45, 0.55, 0.55]],
+                             [[ 0.75, 0.65, 0.15], [0.45, 0.55, 0.55]]],
+    region_central_complex: [[[ 0.0,  0.55, 0.0],  [0.35, 0.35, 0.35]]],
+    region_antennal_lobe:   [[[-0.55,-0.55, 0.55], [0.35, 0.35, 0.35]],
+                             [[ 0.55,-0.55, 0.55], [0.35, 0.35, 0.35]]],
+    region_motor:           [[[ 0.0, -0.85,-0.25], [1.20, 0.35, 0.55]]],
+    region_interneuron:     [[[ 0.0,  0.15, 0.0],  [1.60, 0.70, 0.75]]],
+  };
+  function seededRand(i) {
+    // deterministic per-neuron jitter
+    const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  }
+  function sampleInLobe(lobe, idx) {
+    const [c, r] = lobe;
+    // gaussian-ish sample using two rands
+    const a = seededRand(idx*3+1), b = seededRand(idx*3+2), d = seededRand(idx*3+3);
+    const theta = a * 2*Math.PI;
+    const phi   = Math.acos(2*b - 1);
+    const rad   = Math.pow(d, 0.6);   // pushed toward the surface
+    return [
+      c[0] + r[0]*rad*Math.sin(phi)*Math.cos(theta),
+      c[1] + r[1]*rad*Math.cos(phi),
+      c[2] + r[2]*rad*Math.sin(phi)*Math.sin(theta),
+    ];
+  }
+  if (!usingRealCoords) {
+    for (let i=0;i<nSub;i++) {
+      const ri = brainRegionIdx[i];
+      const key = (ri >= 0 && regionByIdx[ri]) ? regionByIdx[ri].key : 'region_interneuron';
+      const lobes = LOBES[key] || LOBES.region_interneuron;
+      // For paired lobes, split by original x-sign for a left/right bias, else random.
+      let lobe = lobes[0];
+      if (lobes.length > 1) {
+        const origX = brainPositions[3*i];
+        lobe = (origX < 0) ? lobes[0] : lobes[1];
+      }
+      const p = sampleInLobe(lobe, i);
+      brainPositions[3*i]   = p[0];
+      brainPositions[3*i+1] = p[1];
+      brainPositions[3*i+2] = p[2];
+    }
+  }   // end !usingRealCoords fallback
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(brainPositions, 3));
+  const colors = new Float32Array(nSub*3);
+  const sizes  = new Float32Array(nSub);
+  for (let i=0;i<nSub;i++) {
+    const ri = brainRegionIdx[i];
+    const rgb = (ri >= 0 && regionByIdx[ri]) ? regionByIdx[ri].color : [0.5,0.5,0.7];
+    colors[3*i]   = rgb[0]; colors[3*i+1] = rgb[1]; colors[3*i+2] = rgb[2];
+    sizes[i] = 0.12;
+  }
+  brainColorsAttr = new THREE.BufferAttribute(colors, 3);
+  brainSizeAttr   = new THREE.BufferAttribute(sizes, 1);
+  geom.setAttribute('color', brainColorsAttr);   // built-in name used by PointsMaterial(vertexColors:true)
+  geom.setAttribute('aSize',  brainSizeAttr);
+
+  // Simple, robust points material — vertex colours with a soft round sprite.
+  // (Avoids custom shader attribute clashes that can silently fail.)
+  const spriteCanvas = document.createElement('canvas');
+  spriteCanvas.width = spriteCanvas.height = 64;
+  {
+    const g = spriteCanvas.getContext('2d');
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+    grd.addColorStop(0.3, 'rgba(255,255,255,0.55)');
+    grd.addColorStop(1.0, 'rgba(255,255,255,0.0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  }
+  const spriteTex = new THREE.CanvasTexture(spriteCanvas);
+  const mat = new THREE.PointsMaterial({
+    size: 0.10,
+    map: spriteTex,
+    vertexColors: true,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    sizeAttenuation: true,
+  });
+  brainPoints = new THREE.Points(geom, mat);
+  brainScene.add(brainPoints);
+
+  // ---- Anatomical neuropil shells (real FlyWire soma convex hulls) ----
+  // The server sends a triangulated convex hull of every region's real soma
+  // coordinates.  Rendered as translucent, additively-blended meshes, they
+  // reveal the actual fly-brain silhouette (two big optic lobes flanking a
+  // central mass) rather than a schematic sphere.
+  const hulls = Array.isArray(data.hulls) ? data.hulls : [];
+  hulls.forEach(h => {
+    const verts = new Float32Array(h.vertices);
+    const faces = new Uint32Array(h.faces);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    g.setIndex(new THREE.BufferAttribute(faces, 1));
+    g.computeVertexNormals();
+    const col = new THREE.Color(h.color[0], h.color[1], h.color[2]);
+    const mat = new THREE.MeshBasicMaterial({
+      color: col, transparent: true, opacity: 0.08,
+      side: THREE.DoubleSide, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(g, mat);
+    brainScene.add(mesh);
+    // Faint wire outline so the shape stays readable when opacity is low
+    const wire = new THREE.LineSegments(
+      new THREE.WireframeGeometry(g),
+      new THREE.LineBasicMaterial({
+        color: col, transparent: true, opacity: 0.18, depthWrite: false,
+      }));
+    brainScene.add(wire);
+  });
+  if (hulls.length) console.log(`[brain] anatomical neuropil hulls: ${hulls.length}`);
+
+  // ---- Region centroids (in the same scaled space as the point cloud) ----
+  const sums = {};   // key -> {x,y,z,n}
+  for (let i=0;i<nSub;i++) {
+    const ri = brainRegionIdx[i];
+    if (ri < 0) continue;
+    const key = regionByIdx[ri].key;
+    const s = sums[key] || (sums[key] = {x:0,y:0,z:0,n:0});
+    s.x += brainPositions[3*i];
+    s.y += brainPositions[3*i+1];
+    s.z += brainPositions[3*i+2];
+    s.n += 1;
+  }
+  Object.entries(sums).forEach(([key, s]) => {
+    if (s.n > 0) REGION_CENTROIDS[key] = new THREE.Vector3(s.x/s.n, s.y/s.n, s.z/s.n);
+  });
+
+  // ---- Floating text labels at each region centroid (like the mockup) ----
+  function makeLabelSprite(text, rgb) {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 128;
+    const g = c.getContext('2d');
+    g.font = 'bold 44px ui-sans-serif, system-ui, "Segoe UI", Arial';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.shadowColor = 'rgba(0,0,0,0.9)'; g.shadowBlur = 12;
+    g.fillStyle = `rgb(${(rgb[0]*255)|0},${(rgb[1]*255)|0},${(rgb[2]*255)|0})`;
+    g.fillText(text, 256, 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.needsUpdate = true;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+    const sp = new THREE.Sprite(mat);
+    sp.scale.set(2.0, 0.5, 1);
+    return sp;
+  }
+  data.regions.forEach(r => {
+    const c = REGION_CENTROIDS[r.key];
+    if (!c) return;
+    const label = (r.label.split('(')[0] || r.key).trim();
+    const sp = makeLabelSprite(label, r.color);
+    // Push label outward from the brain center for a mockup-style callout.
+    const dir = c.clone().normalize();
+    sp.position.set(c.x + dir.x * 0.6, c.y + 0.9, c.z + dir.z * 0.4);
+    sp.scale.set(1.7, 0.42, 1);
+    brainScene.add(sp);
+  });
+
+  // ---- Curved pathways connecting regions ----
+  // Prefer REAL synaptic edges from the FlyWire connectome (server-supplied).
+  // Each server pathway may contain up to ~40 sampled synapses; we build a
+  // Bezier along each edge (source-neuron → post-neuron), bowing outward so
+  // fans of edges are visually separable.  If the server didn't supply any
+  // (older payloads), fall back to schematic region-centroid curves.
+  const posOfKeep = (ki) => new THREE.Vector3(
+    brainPositions[3*ki], brainPositions[3*ki+1], brainPositions[3*ki+2]);
+  const realPathways = Array.isArray(data.pathways) ? data.pathways : [];
+  if (realPathways.length) {
+    realPathways.forEach(pw => {
+      const rgb = REGION_META_BY_KEY[pw.from]?.color || [0.6,0.7,0.9];
+      const col = new THREE.Color(rgb[0], rgb[1], rgb[2]);
+      pw.edges.forEach(e => {
+        const [pk, qk] = e;
+        if (pk < 0 || qk < 0) return;    // endpoints not in visible subsample
+        const A = posOfKeep(pk), B = posOfKeep(qk);
+        if (A.distanceTo(B) < 0.05) return;
+        const mid = A.clone().add(B).multiplyScalar(0.5);
+        // small perpendicular bow so overlapping edges spread into a fan
+        const bow = new THREE.Vector3().subVectors(B, A)
+          .cross(new THREE.Vector3(0, 1, 0)).normalize()
+          .multiplyScalar(0.08 + 0.05 * Math.random());
+        mid.add(bow);
+        const curve = new THREE.QuadraticBezierCurve3(A, mid, B);
+        const pts = curve.getPoints(24);
+        const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(lineGeom, new THREE.LineBasicMaterial({
+          color: col, transparent: true, opacity: 0.45,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        brainScene.add(line);
+        PATHWAYS.push({ from: pw.from, to: pw.to, curve, line, color: rgb });
+      });
+    });
+    console.log(`[brain] real synaptic pathways: ${PATHWAYS.length} edges across ${realPathways.length} region pairs`);
+  } else {
+    // Fallback: schematic centroid curves
+    PATHWAY_DEFS.forEach(([a, b]) => {
+      const A = REGION_CENTROIDS[a], B = REGION_CENTROIDS[b];
+      if (!A || !B) return;
+      const mid = A.clone().add(B).multiplyScalar(0.5);
+      const bow = new THREE.Vector3().subVectors(B, A).cross(new THREE.Vector3(0,0,1));
+      bow.normalize().multiplyScalar(0.35 + 0.15*Math.random());
+      mid.add(bow);
+      const curve = new THREE.QuadraticBezierCurve3(A, mid, B);
+      const pts = curve.getPoints(40);
+      const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
+      const rgb = REGION_META_BY_KEY[a]?.color || [0.6,0.7,0.9];
+      const col = new THREE.Color(rgb[0], rgb[1], rgb[2]);
+      const line = new THREE.Line(lineGeom, new THREE.LineBasicMaterial({
+        color: col, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      brainScene.add(line);
+      PATHWAYS.push({ from: a, to: b, curve, line, color: rgb });
+    });
+  }
+
+  // ---- Pulse point-cloud (reused buffer for all traveling pulses) ----
+  {
+    const g = new THREE.BufferGeometry();
+    const pos = new Float32Array(MAX_PULSES * 3);
+    const col = new Float32Array(MAX_PULSES * 3);
+    const sz  = new Float32Array(MAX_PULSES);
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aSize',    new THREE.BufferAttribute(sz, 1));
+    pulseGeom = g;
+    pulseColorAttr = g.getAttribute('color');
+    pulseSizeAttr  = g.getAttribute('aSize');
+    pulsePoints = new THREE.Points(g, new THREE.PointsMaterial({
+      size: 0.42, map: spriteTex, vertexColors: true,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    }));
+    pulsePoints.frustumCulled = false;
+    g.setDrawRange(0, 0);
+    brainScene.add(pulsePoints);
+  }
+
+  // Region legend chips + text labels in 3D
+  const leg = $('region-legend');
+  data.regions.forEach(r => {
+    const chip = document.createElement('div');
+    chip.className = 'chip px-2 py-1 flex items-center gap-2';
+    const rgb = `rgb(${(r.color[0]*255)|0},${(r.color[1]*255)|0},${(r.color[2]*255)|0})`;
+    chip.innerHTML = `<span class="h-2.5 w-2.5 rounded-full" style="background:${rgb}"></span>
+                      <span>${r.label} <span class="text-slate-400">(${r.count})</span></span>`;
+    leg.appendChild(chip);
+  });
+}
+
+// ---------------------------------------------------------- Three.js: drone world
+const droneCanvas = $('drone3d');
+const droneRenderer = new THREE.WebGLRenderer({ canvas: droneCanvas, antialias: true, alpha: true });
+droneRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const droneScene = new THREE.Scene();
+droneScene.fog = new THREE.Fog(0x0a1428, 12, 40);
+const droneCam = new THREE.PerspectiveCamera(45, 16/9, 0.1, 200);
+droneCam.position.set(4, 3, 6);
+droneCam.lookAt(0,1,0);
+droneScene.add(new THREE.HemisphereLight(0xaad4ff, 0x33324a, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+sun.position.set(5,10,8); droneScene.add(sun);
+
+// ground: grid
+{
+  const grid = new THREE.GridHelper(40, 40, 0x3a4a75, 0x223050);
+  grid.material.transparent = true; grid.material.opacity = 0.55;
+  droneScene.add(grid);
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(0.9, 40),
+    new THREE.MeshBasicMaterial({color:0xffcc44, transparent:true, opacity:0.35})
+  );
+  disc.rotation.x = -Math.PI/2; disc.position.y = 0.01; droneScene.add(disc);
+}
+// gates (like the mockup) — random neon rectangles
+for (let i=0;i<3;i++){
+  const g = new THREE.Group();
+  const h=2, w=1.6, t=0.06;
+  const c = i===0?0x22ee88 : i===1?0xffaa22 : 0xff5566;
+  const mat = new THREE.MeshStandardMaterial({color:c, emissive:c, emissiveIntensity:0.5});
+  const top = new THREE.Mesh(new THREE.BoxGeometry(w,t,t), mat); top.position.y = h;
+  const bot = new THREE.Mesh(new THREE.BoxGeometry(w,t,t), mat); bot.position.y = 0.05;
+  const l = new THREE.Mesh(new THREE.BoxGeometry(t,h,t), mat); l.position.set(-w/2,h/2,0);
+  const r = new THREE.Mesh(new THREE.BoxGeometry(t,h,t), mat); r.position.set( w/2,h/2,0);
+  g.add(top, bot, l, r);
+  g.position.set(-6 + i*6, 0, -2 + (i%2)*4);
+  droneScene.add(g);
+}
+
+// Real-world-style quadrotor modeled after a DJI Mavic-class folding drone:
+// - long rounded fuselage (light grey plastic)
+// - front gimbal camera in a small dome
+// - 4 folding arms (front pair swept forward, rear pair swept back)
+// - motor bells + spinning props with motion-blur discs at speed
+// - front white LEDs, rear red status LED, belly cyan under-glow
+const drone = new THREE.Group();
+{
+  const shell   = new THREE.MeshStandardMaterial({color:0xd7dbe2, metalness:0.25, roughness:0.55});
+  const shellDk = new THREE.MeshStandardMaterial({color:0x2b303b, metalness:0.4,  roughness:0.5});
+  const motor   = new THREE.MeshStandardMaterial({color:0x1a1d24, metalness:0.85, roughness:0.35});
+  const gimbal  = new THREE.MeshStandardMaterial({color:0x111318, metalness:0.55, roughness:0.4});
+  const lens    = new THREE.MeshStandardMaterial({color:0x0a0e18, metalness:0.9,  roughness:0.15,
+                                                  emissive:0x0a1a3a, emissiveIntensity:0.4});
+  const bladeMat= new THREE.MeshStandardMaterial({color:0x14161c, metalness:0.35, roughness:0.6});
+  const blurMat = new THREE.MeshBasicMaterial({color:0xaad4ff, transparent:true, opacity:0.0, side:THREE.DoubleSide});
+
+  // ----- Fuselage: rounded rectangular body along +X (forward) -----
+  const bodyLen = 0.46, bodyW = 0.14, bodyH = 0.09;
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(bodyW*0.5, bodyLen - bodyW, 6, 12),
+    shell);
+  body.rotation.z = Math.PI/2;       // capsule axis → X
+  drone.add(body);
+  // Top dark trim strip
+  const trim = new THREE.Mesh(
+    new THREE.BoxGeometry(bodyLen*0.85, 0.012, bodyW*0.55), shellDk);
+  trim.position.y = bodyH*0.42;
+  drone.add(trim);
+
+  // ----- Front gimbal camera (small ball hanging under the nose) -----
+  const gRoot = new THREE.Group();
+  gRoot.position.set(bodyLen*0.42, -bodyH*0.45, 0);
+  drone.add(gRoot);
+  const gBall = new THREE.Mesh(new THREE.SphereGeometry(0.045, 20, 14), gimbal);
+  gRoot.add(gBall);
+  const lensMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.018, 20), lens);
+  lensMesh.rotation.z = Math.PI/2;
+  lensMesh.position.set(0.035, 0, 0);
+  gRoot.add(lensMesh);
+
+  // ----- Front white LEDs + rear red status LED -----
+  [-1, 1].forEach(sy => {
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6),
+                               new THREE.MeshBasicMaterial({color:0xffffff}));
+    led.position.set(bodyLen*0.48, 0, bodyW*0.35*sy);
+    drone.add(led);
+  });
+  const rearLed = new THREE.Mesh(new THREE.SphereGeometry(0.02, 10, 8),
+                                 new THREE.MeshBasicMaterial({color:0xff2a2a}));
+  rearLed.position.set(-bodyLen*0.48, 0.02, 0);
+  drone.add(rearLed);
+
+  // ----- Four folding arms + rotors  (Mavic-style layout) -----
+  // Front arms sweep +X/±Z outward, rear arms sweep -X/±Z outward.
+  // Rotor positions: [FR, FL, RL, RR] to match backend spin signs.
+  const armLen = 0.30, armR = 0.020;
+  const rotorR = 0.16;
+  const rotorY = 0.06;                                 // motors sit above body
+  const rotorPositions = [
+    [ 0.28,  rotorY,  0.28],   // FR  CCW
+    [ 0.28,  rotorY, -0.28],   // FL  CW
+    [-0.28,  rotorY, -0.28],   // RL  CCW
+    [-0.28,  rotorY,  0.28],   // RR  CW
+  ];
+  drone.blades = []; drone.blurs = [];
+  rotorPositions.forEach(p => {
+    // Arm from body corner → rotor
+    const start = new THREE.Vector3(Math.sign(p[0])*bodyLen*0.35, 0.005, Math.sign(p[2])*bodyW*0.35);
+    const end   = new THREE.Vector3(p[0], p[1]-0.01, p[2]);
+    const mid   = start.clone().add(end).multiplyScalar(0.5);
+    const dir   = end.clone().sub(start);
+    const len   = dir.length();
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(armR, armR*0.9, len, 10), shellDk);
+    // orient cylinder (default +Y) along dir
+    arm.position.copy(mid);
+    arm.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+    drone.add(arm);
+    // Motor housing
+    const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.055, 20), motor);
+    bell.position.set(p[0], p[1], p[2]);
+    drone.add(bell);
+    // Motor cap (gold)
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.008, 16),
+                               new THREE.MeshStandardMaterial({color:0xd4a34a, metalness:0.9, roughness:0.35}));
+    cap.position.set(p[0], p[1]+0.032, p[2]);
+    drone.add(cap);
+    // Two-blade prop
+    const blade = new THREE.Group();
+    const b1 = new THREE.Mesh(new THREE.BoxGeometry(rotorR*2, 0.006, 0.020), bladeMat);
+    const b2 = b1.clone(); b2.rotation.y = Math.PI/2;
+    blade.add(b1, b2);
+    blade.position.set(p[0], p[1]+0.045, p[2]);
+    drone.add(blade); drone.blades.push(blade);
+    // Motion-blur disc
+    const blurDisc = new THREE.Mesh(new THREE.CircleGeometry(rotorR, 32), blurMat.clone());
+    blurDisc.rotation.x = -Math.PI/2;
+    blurDisc.position.set(p[0], p[1]+0.045, p[2]);
+    drone.add(blurDisc); drone.blurs.push(blurDisc);
+  });
+
+  // ----- Belly cyan under-glow (matches accent colour) -----
+  const glow = new THREE.PointLight(0x22d3ee, 0.55, 3.0);
+  glow.position.set(0, -0.15, 0); drone.add(glow);
+  const bellyPad = new THREE.Mesh(new THREE.CircleGeometry(0.10, 24),
+    new THREE.MeshBasicMaterial({color:0x22d3ee, transparent:true, opacity:0.4}));
+  bellyPad.rotation.x = Math.PI/2; bellyPad.position.y = -bodyH*0.48;
+  drone.add(bellyPad);
+}
+drone.position.set(0,1.5,0);
+drone.scale.set(4.0, 4.0, 4.0);   // bigger so gesture-driven motion is obvious
+droneScene.add(drone);
+// Highlight ring under the drone (billboarded, always visible) so the eye can
+// track the aircraft even against a busy grid.
+const droneRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.55, 0.75, 32),
+  new THREE.MeshBasicMaterial({
+    color: 0x22d3ee, transparent: true, opacity: 0.75,
+    side: THREE.DoubleSide, depthWrite: false,
+  }));
+droneRing.rotation.x = -Math.PI/2;
+droneScene.add(droneRing);
+const TRAJ_MAX = 600;
+const traj = new THREE.BufferGeometry();
+const trajPositions = new Float32Array(TRAJ_MAX*3);
+const trajColors    = new Float32Array(TRAJ_MAX*3);
+traj.setAttribute('position', new THREE.BufferAttribute(trajPositions, 3));
+traj.setAttribute('color',    new THREE.BufferAttribute(trajColors, 3));
+const trajLine = new THREE.Line(traj, new THREE.LineBasicMaterial({
+  vertexColors: true, transparent:true, opacity:0.9, linewidth: 2,
+}));
+droneScene.add(trajLine);
+let trajCount = 0;   // number of valid points (<= TRAJ_MAX)
+
+// ---------------------------------------------------------- Sizing / resize
+function fitCanvas(canvas, cam, renderer, aspectMode) {
+  const r = canvas.getBoundingClientRect();
+  const w = Math.max(2, r.width), h = Math.max(2, r.height);
+  if (canvas.width !== w || canvas.height !== h) {
+    renderer.setSize(w, h, false);
+    cam.aspect = w/h; cam.updateProjectionMatrix();
+  }
+}
+
+// ---------------------------------------------------------- Neural chart
+const chartCtx = $('chart-neural').getContext('2d');
+const neuralChart = new Chart(chartCtx, {
+  type: 'line',
+  data: { labels: Array.from({length:HISTORY_LEN}, (_,i)=>i-HISTORY_LEN), datasets: [] },
+  options: {
+    animation:false, responsive:true, maintainAspectRatio:false,
+    scales:{
+      x:{ ticks:{color:'#8ea0bd', font:{size:9}}, grid:{color:'#1e2a44'} },
+      y:{ min:0, ticks:{color:'#8ea0bd', font:{size:9}}, grid:{color:'#1e2a44'}, title:{display:true, text:'Firing rate (Hz)', color:'#8ea0bd', font:{size:10}} },
+    },
+    plugins:{ legend:{ labels:{ color:'#e6edf7', boxWidth:8, font:{size:10} }, position:'bottom' } },
+  }
+});
+function ensureChartSeries() {
+  if (neuralChart.data.datasets.length) return;
+  Object.values(REGION_META_BY_KEY).forEach(r => {
+    const rgb = `rgb(${(r.color[0]*255)|0},${(r.color[1]*255)|0},${(r.color[2]*255)|0})`;
+    neuralChart.data.datasets.push({
+      label: r.label.split(' (')[0], data: Array(HISTORY_LEN).fill(0),
+      borderColor: rgb, backgroundColor: rgb, borderWidth: 1.4, pointRadius: 0, tension:0.25,
+    });
+  });
+  neuralChart.update('none');
+}
+
+// ---------------------------------------------------------- Motor bars UI
+const MOTOR_ROWS = [
+  {k:'thrust', label:'Thrust',  color:'bg-cyan-400',   text:'text-cyan-200'},
+  {k:'roll',   label:'Roll',    color:'bg-emerald-400',text:'text-emerald-200'},
+  {k:'pitch',  label:'Pitch',   color:'bg-amber-400',  text:'text-amber-200'},
+  {k:'yaw',    label:'Yaw',     color:'bg-fuchsia-400',text:'text-fuchsia-200'},
+];
+{
+  const box = $('motor-bars');
+  MOTOR_ROWS.forEach(r => {
+    box.insertAdjacentHTML('beforeend', `
+      <div class="grid items-center" style="grid-template-columns: 90px 1fr 44px;">
+        <div class="text-[10px] text-slate-300 truncate">${r.label}</div>
+        <div class="mx-1.5 h-2 relative bg-slate-800 rounded overflow-hidden">
+          <div class="absolute inset-y-0 left-1/2 w-px bg-slate-600"></div>
+          <div id="bar-${r.k}" class="bar absolute inset-y-0 left-1/2 ${r.color}" style="width:0%"></div>
+        </div>
+        <div class="text-right text-[10px] font-mono ${r.text}" id="txt-${r.k}">0.00</div>
+      </div>
+    `);
+  });
+}
+function updateMotor(cmd) {
+  MOTOR_ROWS.forEach(r => {
+    const v = Math.max(-1.2, Math.min(1.2, cmd[r.k] || 0));
+    const pct = Math.abs(v)*50; // half-bar range
+    const el = $('bar-'+r.k);
+    if (v >= 0) { el.style.left = '50%'; el.style.width = pct+'%'; }
+    else        { el.style.left = (50 - pct) + '%'; el.style.width = pct+'%'; }
+    $('txt-'+r.k).textContent = (v>=0?'+':'') + v.toFixed(2);
+  });
+}
+
+// ---------------------------------------------------------- Retinal / encoding
+function drawHeatmap(canvas, data, size, colormap='viridis') {
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.width; // reset
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w; canvas.height = h;
+  const img = ctx.createImageData(size, size);
+  let mx = 1e-6;
+  for (let i=0;i<data.length;i++) if (data[i] > mx) mx = data[i];
+  for (let i=0;i<size*size;i++) {
+    const v = data[i] / mx;
+    // simple magma-ish gradient
+    const r = Math.min(255, v*255*1.4);
+    const g = Math.min(255, v*180);
+    const b = Math.min(255, 60 + v*80);
+    img.data[4*i]=r; img.data[4*i+1]=g; img.data[4*i+2]=b; img.data[4*i+3]=255;
+  }
+  const off = new OffscreenCanvas(size, size);
+  off.getContext('2d').putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(off, 0, 0, w, h);
+}
+const encLumCanvas  = $('enc-lum');
+const encEdgeCanvas = $('enc-edge');
+const encFlowCanvas = $('enc-flow');
+const retinalCanvas = $('retinal-map');
+let prevLum = null;
+
+function drawEncodings() {
+  const vid = $('cam');
+  if (!vid.videoWidth) return;
+  const S = 48;
+  const off = new OffscreenCanvas(S, S);
+  const octx = off.getContext('2d');
+  octx.drawImage(vid, 0, 0, S, S);
+  const px = octx.getImageData(0,0,S,S).data;
+  const lum = new Float32Array(S*S), edge = new Float32Array(S*S), flow = new Float32Array(S*S);
+  for (let i=0;i<S*S;i++){
+    lum[i] = (0.299*px[4*i] + 0.587*px[4*i+1] + 0.114*px[4*i+2]) / 255.0;
+  }
+  // Sobel-ish gradient
+  for (let y=1;y<S-1;y++) for (let x=1;x<S-1;x++){
+    const i=y*S+x;
+    const gx = lum[i+1]-lum[i-1], gy = lum[i+S]-lum[i-S];
+    edge[i] = Math.hypot(gx, gy);
+  }
+  if (prevLum) for (let i=0;i<S*S;i++) flow[i] = Math.abs(lum[i]-prevLum[i]);
+  prevLum = lum;
+  drawHeatmap(encLumCanvas, lum, S);
+  drawHeatmap(encEdgeCanvas, edge, S);
+  drawHeatmap(encFlowCanvas, flow, S);
+}
+
+// ---------------------------------------------------------- Stats panel
+function updateStats(pkt) {
+  const s = pkt.stats;
+  const html = [
+    ['Sim time',    pkt.t.toFixed(2)+' s'],
+    ['Δt neural',    '1 ms'],
+    ['Active neurons', s.n_active.toLocaleString()],
+    ['Total spikes', s.total_spikes.toLocaleString()],
+    ['N (total)',    s.n_total.toLocaleString()],
+    ['Synapses',     s.n_edges.toLocaleString()],
+    ['Gesture',      pkt.gesture.toUpperCase()],
+    ['Confidence',   Math.round(pkt.confidence*100)+' %'],
+  ].map(([k,v]) => `<div class="text-slate-400">${k}</div><div class="text-white text-right">${v}</div>`).join('');
+  $('sim-stats').innerHTML = html;
+  $('stat-edges-count').textContent = s.n_edges.toLocaleString();
+}
+
+// ---------------------------------------------------------- Handle incoming state
+function applyPacket(pkt) {
+  // gesture chip
+  const chip = $('gesture-chip');
+  chip.textContent = pkt.gesture.toUpperCase() + '  ' + Math.round(pkt.confidence*100) + '%';
+
+  $('txt-time').textContent = pkt.t.toFixed(1);
+  updateStats(pkt);
+  updateMotor(pkt.cmd);
+
+  // brain colour/size updated from per-neuron activity
+  if (brainPoints && pkt.activity && brainColorsAttr) {
+    const act = pkt.activity;
+    const nSub = brainRegionIdx.length;
+    const colors = brainColorsAttr.array;
+    const sizes  = brainSizeAttr.array;
+    for (let i=0;i<nSub;i++) {
+      const fullIdx = brainKeepList[i];
+      const a = Math.min(1.0, Math.max(0, act[fullIdx] * 12.0));
+      const ri = brainRegionIdx[i];
+      const base = (ri >= 0) ? REGION_META_BY_KEY_LIST[ri].color : [0.4,0.4,0.55];
+      // brighten with activity toward warm-white
+      colors[3*i]   = base[0] + a*(1.0 - base[0]);
+      colors[3*i+1] = base[1] + a*(0.85 - base[1]);
+      colors[3*i+2] = base[2] + a*(0.4  - base[2]);
+      sizes[i] = 0.12 + a*0.55;
+    }
+    brainColorsAttr.needsUpdate = true;
+    brainSizeAttr.needsUpdate   = true;
+  }
+
+  // ---- Spawn signal pulses along pathways when a source region fires ----
+  // In addition to the server's per-region rates, we apply a *gesture-specific*
+  // pathway boost so the user visibly sees which circuits their hand gesture
+  // is driving.  Each gesture routes activity through a canonical subset of
+  // real FlyWire pathways:
+  //   UP/DOWN/LEFT/RIGHT     → optic_lobe  → central_complex → motor
+  //   ROTATE_CW / ROTATE_CCW → mushroom_body → central_complex/motor
+  //   (no gesture)           → gentle baseline flow along every pathway
+  const GESTURE_PATHWAY_BOOST = {
+    up:         { 'region_optic_lobe→region_central_complex': 3.0,
+                  'region_central_complex→region_motor':     3.0 },
+    down:       { 'region_optic_lobe→region_central_complex': 3.0,
+                  'region_central_complex→region_motor':     3.0 },
+    left:       { 'region_optic_lobe→region_central_complex': 3.0,
+                  'region_central_complex→region_motor':     3.0 },
+    right:      { 'region_optic_lobe→region_central_complex': 3.0,
+                  'region_central_complex→region_motor':     3.0 },
+    rotate_cw:  { 'region_mushroom_body→region_central_complex': 3.0,
+                  'region_mushroom_body→region_motor':          3.0 },
+    rotate_ccw: { 'region_mushroom_body→region_central_complex': 3.0,
+                  'region_mushroom_body→region_motor':          3.0 },
+  };
+  if (PATHWAYS.length) {
+    const gest = (pkt.gesture || 'none').toLowerCase();
+    const boostMap = GESTURE_PATHWAY_BOOST[gest] || {};
+    const armedFactor = (pkt.confidence > 0.15) ? 1.0 : 0.0;
+    window.__lastGesture  = gest;
+    window.__lastConf     = pkt.confidence || 0;
+    window.__lastBoostMap = boostMap;
+    // With many real edges per pair, scale spawn prob by 1/N_edges_per_pair
+    // so total pulse activity is bounded and proportional to region firing.
+    const pairCount = {};
+    PATHWAYS.forEach(pw => {
+      const k = pw.from + '→' + pw.to;
+      pairCount[k] = (pairCount[k] || 0) + 1;
+    });
+    PATHWAYS.forEach(pw => {
+      const pairKey = pw.from + '→' + pw.to;
+      const rate    = pkt.region_rates[pw.from] || 0;
+      const prev    = PREV_REGION_RATE[pw.from] || 0;
+      const denom   = Math.max(1, pairCount[pairKey]);
+      // Baseline flow so every pathway shows life even when idle
+      const baseline = 0.15;
+      // Gesture-driven boost (0 while disarmed)
+      const boost = (boostMap[pairKey] || 0.0) * armedFactor;
+      // Combined spawn probability (per-edge)
+      const p = ( baseline
+                + Math.min(0.9, rate / 60.0)
+                + Math.max(0, rate - prev) / 40.0
+                + boost
+                ) / denom;
+      if (Math.random() < p && PULSES.length < MAX_PULSES) {
+        PULSES.push({
+          pw,
+          t: 0.0,
+          speed: 0.9 + Math.random() * 1.1 + boost * 0.3,   // gesture pulses travel faster
+          intensity: 0.7 + Math.min(1.0, rate / 80.0) * 0.6 + boost * 0.15,
+        });
+      }
+    });
+    Object.keys(pkt.region_rates || {}).forEach(k => {
+      PREV_REGION_RATE[k] = pkt.region_rates[k];
+    });
+    // ---- Highlight the source regions of the active gesture ----
+    // Overlay a bright pulse on all neurons of the gesture's source regions
+    // so the eye can locate "where the command is coming from" in the 3D brain.
+    if (brainPoints && brainColorsAttr && armedFactor > 0) {
+      const sourceRegions = new Set(
+        Object.keys(boostMap).map(k => k.split('→')[0]));
+      if (sourceRegions.size) {
+        const colors = brainColorsAttr.array;
+        const sizes  = brainSizeAttr.array;
+        const nSub   = brainRegionIdx.length;
+        const flash  = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
+        for (let i = 0; i < nSub; i++) {
+          const ri = brainRegionIdx[i];
+          if (ri < 0) continue;
+          const key = REGION_META_BY_KEY_LIST[ri]?.key;
+          if (!sourceRegions.has(key)) continue;
+          // add a warm-white glow on top of the existing colour
+          colors[3*i]   = Math.min(1.0, colors[3*i]   + 0.35 * flash);
+          colors[3*i+1] = Math.min(1.0, colors[3*i+1] + 0.25 * flash);
+          colors[3*i+2] = Math.min(1.0, colors[3*i+2] + 0.10 * flash);
+          sizes[i] = Math.max(sizes[i], 0.28 + 0.25 * flash);
+        }
+        brainColorsAttr.needsUpdate = true;
+        brainSizeAttr.needsUpdate   = true;
+      }
+    }
+  }
+
+  // retinal heatmap = optic-lobe activity binned to 16×16
+  if (brainPoints && pkt.activity) {
+    const opticKey = 'region_optic_lobe';
+    const meta = REGION_META_BY_KEY[opticKey];
+    if (meta) {
+      // reuse the subsampled indices for that region
+      const idxs = [];
+      for (let i=0;i<brainRegionIdx.length;i++)
+        if (REGION_META_BY_KEY_LIST[brainRegionIdx[i]]?.key === opticKey) idxs.push(brainKeepList[i]);
+      const vals = new Float32Array(256);
+      for (let i=0;i<Math.min(256, idxs.length); i++) vals[i] = pkt.activity[idxs[i]] || 0;
+      drawHeatmap(retinalCanvas, vals, 16);
+    }
+  }
+
+  // drone
+  const [px, py, pz] = pkt.drone.pos;
+  const [rr, rp, ry] = pkt.drone.rpy;
+  // Server frame: X-fwd, Y-left, Z-up.  Three.js scene: Y-up.
+  drone.position.set(px, pz, -py);
+  // roll about body-x, pitch about body-y, yaw about body-z (world Z-up)
+  // In Three.js Y-up we remap: yaw→Y, pitch→X, roll→Z, order YXZ.
+  drone.rotation.set(rp, -ry, rr, 'YXZ');
+  // spin rotors with individual RPMs when available
+  const rotors = pkt.drone.rotors || [0.5, 0.5, 0.5, 0.5];
+  drone.blades.forEach((b, i) => {
+    const rpm01 = Math.max(0.05, Math.min(1.5, rotors[i] || 0.5));
+    const sign = (i % 2 === 0) ? 1.0 : -1.0;
+    b.rotation.y += sign * (0.6 + 4.5 * rpm01);
+    if (drone.blurs && drone.blurs[i]) {
+      const op = Math.max(0.0, Math.min(0.55, (rpm01 - 0.35) * 1.2));
+      drone.blurs[i].material.opacity = op;
+      b.visible = rpm01 < 0.6;   // hide sharp blades at high RPM (motion blur takes over)
+    }
+  });
+  // brief red flash if a boundary/ground collision was reported
+  if (pkt.drone.collided) $('drone-hud').classList.add('bg-red-900/70');
+  else                    $('drone-hud').classList.remove('bg-red-900/70');
+  // trajectory push — rolling buffer with fading colour tail
+  if (trajCount < TRAJ_MAX) {
+    trajCount++;
+  } else {
+    // shift left by one point (drop oldest)
+    trajPositions.copyWithin(0, 3, TRAJ_MAX*3);
+  }
+  const j = trajCount - 1;
+  trajPositions[3*j]   = drone.position.x;
+  trajPositions[3*j+1] = drone.position.y;
+  trajPositions[3*j+2] = drone.position.z;
+  // recompute per-vertex colours: newest = bright cyan, oldest = faded
+  for (let k=0; k<trajCount; k++) {
+    const a = k / Math.max(1, trajCount-1);   // 0 (oldest) → 1 (newest)
+    trajColors[3*k]   = 0.10 + 0.10*a;
+    trajColors[3*k+1] = 0.55 + 0.30*a;
+    trajColors[3*k+2] = 0.75 + 0.25*a;
+  }
+  traj.setDrawRange(0, trajCount);
+  traj.attributes.position.needsUpdate = true;
+  traj.attributes.color.needsUpdate    = true;
+  // follow camera — smooth chase with a fixed offset so translation is
+  // clearly visible but the drone never leaves frame.
+  const desiredCam = new THREE.Vector3(
+    drone.position.x - 8,
+    drone.position.y + 5,
+    drone.position.z + 10,
+  );
+  droneCam.position.lerp(desiredCam, 0.06);
+  droneCam.lookAt(drone.position);
+  // Keep the highlight ring under the drone, gently pulsing so it's obvious.
+  droneRing.position.set(drone.position.x, 0.02, drone.position.z);
+  droneRing.material.opacity = 0.5 + 0.3 * Math.sin(performance.now() * 0.005);
+  // HUD
+  const rotorPct = (pkt.drone.rotors || []).map(v => Math.round(v*100)).join(' / ');
+  $('drone-hud').innerHTML =
+    `Position : (${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)}) m<br>` +
+    `Speed    : ${pkt.drone.speed.toFixed(2)} m/s<br>` +
+    `Orient   : R=${(rr*180/Math.PI).toFixed(1)}°  P=${(rp*180/Math.PI).toFixed(1)}°  Y=${(ry*180/Math.PI).toFixed(1)}°<br>` +
+    `Rotors % : ${rotorPct}<br>` +
+    `Physics  : ${pkt.drone.physics || '—'}  ·  Gesture : ${pkt.gesture.toUpperCase()}`;
+}
+
+let REGION_META_BY_KEY_LIST = [];   // indexed by ri
+function finaliseRegions() {
+  REGION_META_BY_KEY_LIST = Object.values(REGION_META_BY_KEY);
+}
+
+// ---------------------------------------------------------- WebSocket
+let lastFps = 0, fpsCount = 0, fpsT0 = performance.now();
+function connectWS() {
+  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+  ws = new WebSocket(url);
+  ws.onmessage = ev => {
+    try { applyPacket(JSON.parse(ev.data)); } catch (e) { console.error(e); }
+    fpsCount++;
+    const now = performance.now();
+    if (now - fpsT0 > 1000) {
+      lastFps = fpsCount * 1000 / (now - fpsT0);
+      fpsT0 = now; fpsCount = 0;
+      $('txt-fps').textContent = lastFps.toFixed(0);
+    }
+  };
+  ws.onclose = () => { console.warn('ws closed, retry in 1s'); setTimeout(connectWS, 1000); };
+  ws.onerror = () => ws.close();
+}
+function sendGesture(name, conf) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({type:'gesture', gesture:name, confidence:conf}));
+}
+
+// ---------------------------------------------------------- Webcam + MediaPipe
+const camVideo = $('cam');
+const camOverlay = $('cam-overlay');
+const camOverlayCtx = camOverlay.getContext('2d');
+
+let hands = null;
+let useLive = true;
+let simInterval = null;
+
+async function startWebcam() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: 'user' }, audio: false });
+    camVideo.srcObject = stream;
+    await camVideo.play();
+    $('cam-status').textContent = 'live';
+  } catch (e) {
+    $('cam-status').textContent = 'no camera (' + e.message + ')';
+  }
+}
+
+function classifyHandGesture(landmarks) {
+  // landmarks are 21 normalized points {x,y,z}.  We derive a hand-local
+  // coordinate frame so finger-extension and pointing direction are
+  // *rotation-invariant* (previous version only worked with an upright hand).
+  const wrist = landmarks[0];
+  const midMcp = landmarks[9];                  // middle-finger base
+  // Palm "up" axis (wrist → middle MCP), normalized
+  let ux = midMcp.x - wrist.x, uy = midMcp.y - wrist.y;
+  const uL = Math.hypot(ux, uy) || 1e-6;
+  ux /= uL; uy /= uL;
+  // Palm size scale (used to normalise distances)
+  const palm = Math.hypot(landmarks[5].x - landmarks[17].x,
+                          landmarks[5].y - landmarks[17].y) || 1e-6;
+  // A finger is "extended" when its tip is farther from the wrist along the
+  // palm-up axis than its PIP joint — measured in palm-widths, so hand size
+  // and rotation don't matter.
+  const extended = (tip, pip) => {
+    const tProj = (landmarks[tip].x - wrist.x) * ux + (landmarks[tip].y - wrist.y) * uy;
+    const pProj = (landmarks[pip].x - wrist.x) * ux + (landmarks[pip].y - wrist.y) * uy;
+    return (tProj - pProj) / palm > 0.15;
+  };
+  const idxUp   = extended(8, 6);
+  const midUp   = extended(12, 10);
+  const ringUp  = extended(16, 14);
+  const pinkyUp = extended(20, 18);
+  const openCount = [idxUp, midUp, ringUp, pinkyUp].filter(Boolean).length;
+  // Thumb "spread" — tip far from index base, normalised by palm size.
+  const thumbSpread = Math.hypot(
+    landmarks[4].x - landmarks[5].x,
+    landmarks[4].y - landmarks[5].y,
+  ) / palm > 0.55;
+
+  // Angle of the palm-up axis in the image (0=right, 90=up, ±180=left, -90=down)
+  const ang = Math.atan2(-uy, ux) * 180/Math.PI;
+
+  // HIGH-FIVE (all 4 fingers extended, thumb spread) toggles ARM / DISARM.
+  // Note: pointing direction doesn't matter for the toggle — that's what
+  // distinguishes it from the UP flight command, which requires only 3+
+  // fingers extended (typical open-palm) *without* the thumb spread.
+  if (openCount === 4 && thumbSpread) {
+    return { gesture: 'arm_toggle', confidence: 0.95 };
+  }
+
+  // Flight gestures — direction comes from `ang` (palm-up axis in image)
+  //   3+ fingers extended, thumb NOT spread → UP/DOWN/LEFT/RIGHT by palm angle
+  //   0-1 fingers extended (fist) → ROTATE_CW / _CCW by tilt direction
+  //   single index finger extended → also directional
+  let g = 'none';
+  const dirFromAngle = () => {
+    if (ang > 45 && ang < 135)         return 'up';
+    if (ang < -45 && ang > -135)       return 'down';
+    if (ang >= 135 || ang <= -135)     return 'left';
+    return 'right';
+  };
+  if (openCount >= 3) {
+    g = dirFromAngle();
+  } else if (openCount === 0) {
+    g = ang >= 0 ? 'rotate_cw' : 'rotate_ccw';
+  } else if (idxUp && !midUp && !ringUp && !pinkyUp) {
+    g = dirFromAngle();
+  }
+  return { gesture: g, confidence: 0.6 + 0.1 * openCount };
+}
+
+// ---- Temporal smoothing so single-frame misfires don't jitter the drone ----
+const GESTURE_HISTORY = [];
+const GESTURE_HISTORY_LEN = 5;   // ~150 ms at 30 fps
+let LAST_SENT_GESTURE = 'none';
+function smoothGesture(g) {
+  GESTURE_HISTORY.push(g.gesture);
+  if (GESTURE_HISTORY.length > GESTURE_HISTORY_LEN) GESTURE_HISTORY.shift();
+  // Majority vote — need >=60% agreement or we keep the previous stable one.
+  const counts = {};
+  GESTURE_HISTORY.forEach(x => { counts[x] = (counts[x] || 0) + 1; });
+  let best = LAST_SENT_GESTURE, bestN = 0;
+  for (const k in counts) if (counts[k] > bestN) { best = k; bestN = counts[k]; }
+  const stable = bestN / GESTURE_HISTORY.length >= 0.6;
+  if (stable) LAST_SENT_GESTURE = best;
+  return { gesture: LAST_SENT_GESTURE,
+           confidence: stable ? g.confidence : 0.4 * g.confidence };
+}
+
+// ---------- Arm / disarm state machine (hand-gesture start/stop) -----------
+// The drone starts DISARMED.  A sustained HIGH-FIVE (open hand, 5 fingers
+// spread) for ≥ 0.8 s toggles ARMED ↔ DISARMED.  While disarmed, we override
+// whatever the classifier says and send `none` so the server keeps the drone
+// hovering on the pad (or descending to it).
+let DRONE_ARMED = false;
+let armToggleT0 = 0;
+let armPoseCooldown = false;         // true while the hold-pose is still visible after a toggle
+const ARM_HOLD_MS = 800;
+function armStateMachine(g) {
+  const now = performance.now();
+  if (g.gesture === 'arm_toggle') {
+    if (armPoseCooldown) {
+      // still holding the pose from the last toggle → suppress but don't retrigger
+      return { gesture: 'none', confidence: 0.0 };
+    }
+    if (armToggleT0 === 0) armToggleT0 = now;
+    if (now - armToggleT0 >= ARM_HOLD_MS) {
+      DRONE_ARMED = !DRONE_ARMED;
+      armToggleT0 = 0;
+      armPoseCooldown = true;         // must release the pose before another toggle
+      const el = document.getElementById('arm-badge');
+      if (el) {
+        el.textContent = DRONE_ARMED ? '● ARMED' : '○ DISARMED';
+        el.className = 'text-[10px] font-bold ' +
+          (DRONE_ARMED ? 'text-emerald-300' : 'text-slate-400');
+      }
+    }
+    // While holding the pose, don't forward it as a flight command
+    return { gesture: 'none', confidence: 0.0 };
+  }
+  // Pose released → reset both the timer and the cooldown latch
+  armToggleT0 = 0;
+  armPoseCooldown = false;
+  if (!DRONE_ARMED) return { gesture: 'none', confidence: 0.0 };
+  return g;
+}
+
+function drawHandOverlay(landmarks) {
+  const w = camOverlay.clientWidth, h = camOverlay.clientHeight;
+  camOverlay.width = w; camOverlay.height = h;
+  camOverlayCtx.clearRect(0,0,w,h);
+  // MediaPipe returns landmarks in normalized coords of the *flipped* video (we don't flip).
+  // Draw connectors:
+  const HAND_CONNECTIONS = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [5,9],[9,10],[10,11],[11,12],
+    [9,13],[13,14],[14,15],[15,16],
+    [13,17],[17,18],[18,19],[19,20],
+    [0,17],
+  ];
+  camOverlayCtx.strokeStyle = '#22d3ee'; camOverlayCtx.lineWidth = 2;
+  camOverlayCtx.fillStyle   = '#a5f3fc';
+  camOverlayCtx.beginPath();
+  HAND_CONNECTIONS.forEach(([a,b]) => {
+    camOverlayCtx.moveTo(landmarks[a].x*w, landmarks[a].y*h);
+    camOverlayCtx.lineTo(landmarks[b].x*w, landmarks[b].y*h);
+  });
+  camOverlayCtx.stroke();
+  landmarks.forEach(p => {
+    camOverlayCtx.beginPath();
+    camOverlayCtx.arc(p.x*w, p.y*h, 3, 0, Math.PI*2);
+    camOverlayCtx.fill();
+  });
+}
+
+async function startMediapipe() {
+  hands = new Hands({
+    locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`,
+  });
+  hands.setOptions({ maxNumHands: 1, modelComplexity: 0,
+    minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
+  hands.onResults(res => {
+    if (res.multiHandLandmarks && res.multiHandLandmarks.length) {
+      const lm = res.multiHandLandmarks[0];
+      drawHandOverlay(lm);
+      const raw = classifyHandGesture(lm);
+      const smoothed = smoothGesture(raw);
+      const g = armStateMachine(smoothed);
+      sendGesture(g.gesture, g.confidence);
+    } else {
+      const w = camOverlay.clientWidth, h = camOverlay.clientHeight;
+      camOverlay.width = w; camOverlay.height = h;
+      camOverlayCtx.clearRect(0,0,w,h);
+      sendGesture('none', 0.0);
+    }
+  });
+  // pump frames from the <video>
+  // NOTE: `hands.send()` occasionally rejects (WASM hiccups, camera hidden,
+  // GPU context loss).  We MUST catch that and MUST always reschedule the
+  // next frame, otherwise detection silently dies after a few gestures.
+  let pumpBusy = false;
+  let pumpErrors = 0;
+  async function pump() {
+    try {
+      if (useLive && camVideo.readyState === 4 && !pumpBusy) {
+        pumpBusy = true;
+        await hands.send({ image: camVideo });
+        drawEncodings();
+      }
+    } catch (e) {
+      pumpErrors++;
+      console.warn('[hands.send] error', e, ' total=', pumpErrors);
+      // If MediaPipe crashes hard (>20 consecutive fails), rebuild it.
+      if (pumpErrors > 20) {
+        console.warn('[hands] restarting MediaPipe pipeline');
+        pumpErrors = 0;
+        try { hands.close?.(); } catch (_) {}
+        setTimeout(startMediapipe, 500);
+        return;
+      }
+    } finally {
+      pumpBusy = false;
+    }
+    requestAnimationFrame(pump);
+  }
+  pump();
+}
+
+// ---------------------------------------------------------- Simulated gestures
+function stopSim() { if (simInterval) { clearInterval(simInterval); simInterval = null; } }
+function startSim() {
+  stopSim();
+  const seq = ['up','up','up','none','right','right','none','rotate_cw','down','none','left','left'];
+  let i = 0;
+  simInterval = setInterval(() => {
+    const g = seq[i++ % seq.length];
+    // In simulated mode we auto-arm so the demo always flies.
+    DRONE_ARMED = true;
+    const badge = document.getElementById('arm-badge');
+    if (badge) { badge.textContent = '● ARMED (sim)'; badge.className = 'text-[10px] font-bold text-emerald-300'; }
+    sendGesture(g, g==='none'?0.0:0.8);
+  }, 1200);
+}
+$('btn-live').addEventListener('click', () => {
+  useLive = true; stopSim();
+  $('btn-live').classList.add('bg-cyan-500/25','text-cyan-100');
+  $('btn-sim').classList.remove('bg-cyan-500/25','text-cyan-100');
+  $('cam-status').textContent = 'live';
+});
+$('btn-sim').addEventListener('click', () => {
+  useLive = false; startSim();
+  $('btn-sim').classList.add('bg-cyan-500/25','text-cyan-100');
+  $('btn-live').classList.remove('bg-cyan-500/25','text-cyan-100');
+  $('cam-status').textContent = 'simulated';
+});
+
+// ---------------------------------------------------------- Boot
+(async function main() {
+  try { await setupBrain(); } catch (e) {
+    console.error('[boot] setupBrain failed:', e);
+    $('brain-status').textContent = 'brain error — see console';
+  }
+  try { finaliseRegions(); } catch (e) { console.error('[boot] finaliseRegions:', e); }
+  try { connectWS();       } catch (e) { console.error('[boot] connectWS:', e); }
+  try { await startWebcam();    } catch (e) { console.error('[boot] startWebcam:', e); }
+  try { await startMediapipe(); } catch (e) { console.error('[boot] startMediapipe:', e); }
+})();
+
+function renderLoop() {
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - (renderLoop._prev || now)) / 1000);
+  renderLoop._prev = now;
+
+  // ---- advance signal pulses along their curves ----
+  if (pulseGeom && PULSES.length >= 0) {
+    // trail-fade: subtly darken any previous pulse rendering by shrinking dying ones
+    let write = 0;
+    const pos = pulseGeom.getAttribute('position').array;
+    const col = pulseColorAttr.array;
+    const sz  = pulseSizeAttr.array;
+    for (let i=0;i<PULSES.length;i++) {
+      const p = PULSES[i];
+      p.t += p.speed * dt;
+      if (p.t >= 1.0) continue;   // dropped
+      const v = p.pw.curve.getPoint(p.t);
+      pos[3*write]   = v.x;
+      pos[3*write+1] = v.y;
+      pos[3*write+2] = v.z;
+      // colour blends from source region → destination region
+      const c0 = p.pw.color;
+      const c1 = REGION_META_BY_KEY[p.pw.to]?.color || c0;
+      const a  = p.t;
+      col[3*write]   = (c0[0]*(1-a) + c1[0]*a) * p.intensity;
+      col[3*write+1] = (c0[1]*(1-a) + c1[1]*a) * p.intensity;
+      col[3*write+2] = (c0[2]*(1-a) + c1[2]*a) * p.intensity;
+      // brightest in the middle
+      const bell = 4.0 * a * (1.0 - a);
+      sz[write] = 0.05 + 0.09 * bell * p.intensity;
+      write++;
+      if (write >= MAX_PULSES) break;
+    }
+    // compact PULSES to drop finished ones
+    PULSES.splice(0, PULSES.length, ...PULSES.filter(p => p.t < 1.0));
+    pulseGeom.setDrawRange(0, write);
+    pulseGeom.getAttribute('position').needsUpdate = true;
+    pulseColorAttr.needsUpdate = true;
+    pulseSizeAttr.needsUpdate  = true;
+  }
+  // ---- throb pathway opacity with source region rate + gesture boost ----
+  const gestNow    = (window.__lastGesture || 'none');
+  const gestConf   = (window.__lastConf    || 0);
+  const boostNow   = (window.__lastBoostMap || {});
+  PATHWAYS.forEach(pw => {
+    const rate  = PREV_REGION_RATE[pw.from] || 0;
+    const key   = pw.from + '→' + pw.to;
+    const gBoost = (boostNow[key] || 0) * (gestConf > 0.15 ? 1.0 : 0.0);
+    pw.line.material.opacity = 0.30 + Math.min(0.55, rate / 80.0) + gBoost * 0.15;
+  });
+
+  fitCanvas(brainCanvas, brainCam, brainRenderer);
+  brainCtl.update();
+  brainRenderer.render(brainScene, brainCam);
+  fitCanvas(droneCanvas, droneCam, droneRenderer);
+  droneRenderer.render(droneScene, droneCam);
+  requestAnimationFrame(renderLoop);
+}
+renderLoop();
+</script>
+</body>
+</html>
